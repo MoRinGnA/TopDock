@@ -270,6 +270,9 @@ namespace TopDock.Services
             return false;
         }
 
+        // 곡 종료 직전 갱신 요청의 쿨다운 타임스탬프 (GetExactPosition은 50ms 타이머에서 호출됨)
+        private DateTime _lastEndRefreshAt = DateTime.MinValue;
+
         public bool GetExactPosition(out TimeSpan currentPos, out TimeSpan duration)
         {
             currentPos = TimeSpan.Zero;
@@ -299,9 +302,16 @@ namespace TopDock.Services
                             }
                         }
 
+                        // 곡 종료 임박 시 다음 트랙 감지를 위해 갱신하지만,
+                        // 50ms 타이머가 초당 20번 조건에 걸리므로 쿨다운으로 1초당 최대 1회만 실행한다.
                         if (duration > TimeSpan.Zero && currentPos >= duration - TimeSpan.FromMilliseconds(200))
                         {
-                            _ = Task.Run(UpdateMediaPropertiesAsync);
+                            var now = DateTime.UtcNow;
+                            if (now - _lastEndRefreshAt >= TimeSpan.FromSeconds(1))
+                            {
+                                _lastEndRefreshAt = now;
+                                _ = Task.Run(UpdateMediaPropertiesAsync);
+                            }
                         }
 
                         if (CurrentMedia != null)
