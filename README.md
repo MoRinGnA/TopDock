@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌒 TopDock
+# TopDock
 
 **Windows 화면 상단에 떠 있는 다이나믹 아일랜드**
 
@@ -12,15 +12,13 @@
 [![WPF](https://img.shields.io/badge/UI-WPF-5C2D91)](https://learn.microsoft.com/dotnet/desktop/wpf/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-FF9F0A)](https://github.com/MoRinGnA/TopDock/pulls)
 
-<br/>
-
 *스크린샷 자리 — `docs/` 폴더에 캡처를 넣으면 이 자리에 표시됩니다*
 
 </div>
 
 ---
 
-## 🤔 TopDock이 왜 필요한가요?
+## TopDock이 왜 필요한가요?
 
 노트북으로 작업하다 보면 이런 순간이 반복됩니다.
 
@@ -35,40 +33,40 @@ iPhone의 다이나믹 아일랜드처럼.
 
 ---
 
-## ✨ 주요 기능
+## 주요 기능
 
-### 🎵 미디어 컨트롤 & 실시간 가사
+### 미디어 컨트롤 & 실시간 가사
 - **모든 플레이어 지원** — 브라우저 YouTube, Spotify, PotPlayer 등 SMTC를 보고하는 앱이라면 무엇이든
 - 앨범아트, 진행바, 재생/일시정지/이전/다음 컨트롤
 - **싱크 가사 자동 검색** (LRCLIB 연동) — 현재 재생 구간 가사가 노치에 흐릅니다
 - 영상과 음원 길이가 달라도 **오프셋 자동 보정**으로 싱크 유지
 - 한 번 본 가사는 **디스크에 영구 캐시** — 오프라인에서도 즉시 표시
 
-### 🌈 앰비언트 글로우
+### 앰비언트 글로우
 - 앨범아트에서 **지배색을 추출**해 노치 주변에 은은한 빛무리를 표현
 - 곡이 바뀌면 색이 **부드럽게 크로스페이드**
 - 흑백 앨범은 흑백 빛으로 반응
 - 취향에 따라 **절제 / 표준 / 화려 3단 강도 프리셋**
 
-### 📋 클립보드 히스토리
+### 클립보드 히스토리
 - 복사한 텍스트 **최근 5개**를 노치에서 바로 확인, 클릭 한 번으로 재복사
 - **Win+Shift+S 캡처 이미지도 지원** — 썸네일로 보이고 클릭하면 이미지 재복사
 - 같은 내용을 여러 번 복사/재캡처해도 **중복 없이 한 장만** 유지
 - "복사했다가 덮어쓴 그 순간"을 위한 기능
 
-### ⏭️ 스폰서 구간 자동 스킵
+### 스폰서 구간 자동 스킵
 - [SponsorBlock](https://sponsor.ajay.app/) 연동 — 스폰서·인트로·아웃트로 구간을 자동으로 건너뜁니다
 - 확장 뷰 진행바에 **구간이 색상 마커로 표시**되어 한눈에 파악
 - 카테고리별 on/off, YouTube Data API 키 입력 시 더 정확한 매칭
 
-### 🔋 시스템 인디케이터
+### 시스템 인디케이터
 - **충전 중 = 초록 라이트**, 저전력 = 빨강 라이트 (테두리에 배터리 잔량 게이지)
 - 노치 위에서 **마우스 휠만으로 볼륨 조절** + 실시간 볼륨 HUD
 - Windows 알림을 노치 위에서 접수
 
 ---
 
-## 🕹️ 사용 방법
+## 사용 방법
 
 | 하고 싶은 것 | 방법 |
 |---|---|
@@ -82,26 +80,26 @@ iPhone의 다이나믹 아일랜드처럼.
 | 설정 열기 | **트레이 아이콘 우클릭 → 설정** |
 | 종료 | 트레이 아이콘 우클릭 → 종료 |
 
-> 💡 **팁**: 미디어 재생 중에는 우상단 클립보드 아이콘으로 히스토리를 꺼낼 수 있고,
+> **참고**: 미디어 재생 중에는 우상단 클립보드 아이콘으로 히스토리를 꺼낼 수 있고,
 > 시계 모드에서는 히스토리가 있으면 자동으로 표시됩니다.
 
 ---
 
-## ⚙️ 설정
+## 설정
 
 트레이 아이콘 우클릭 → **설정**에서 조절할 수 있습니다.
 
-- 🌈 앰비언트 글로우 강도 (절제 / 표준 / 화려)
-- 📏 노치 상단 여백 (0~40px)
-- 🔔 알림 / 클립보드 토스트 on/off
-- ⏭️ 스폰서 스킵 카테고리별 토글 (intro / outro / intermission / music_offtopic)
-- 🔑 YouTube Data API 키 (선택 — 없으면 HTML 검색으로 대체)
+- 앰비언트 글로우 강도 (절제 / 표준 / 화려)
+- 노치 상단 여백 (0~40px)
+- 알림 / 클립보드 토스트 on/off
+- 스폰서 스킵 카테고리별 토글 (intro / outro / intermission / music_offtopic)
+- YouTube Data API 키 (선택 — 없으면 HTML 검색으로 대체)
 
 설정은 `%APPDATA%\TopDock\config.json`에 저장됩니다.
 
 ---
 
-## 🛠️ 빌드 방법
+## 빌드 방법
 
 **요구 사항**: Windows 10 (19041+) 이상, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
@@ -121,7 +119,7 @@ bin\Release\net10.0-windows10.0.19041.0\TopDock.exe
 
 ---
 
-## 🧱 기술 스택
+## 기술 스택
 
 | 영역 | 사용 기술 |
 |---|---|
@@ -135,7 +133,7 @@ bin\Release\net10.0-windows10.0.19041.0\TopDock.exe
 
 ---
 
-## 🗺️ 로드맵
+## 로드맵
 
 - [ ] 알림 인박스 — 놓친 알림을 노치에서 다시 보기
 - [ ] 집중 시간 위젯 & 휴식 알림
@@ -149,6 +147,6 @@ bin\Release\net10.0-windows10.0.19041.0\TopDock.exe
 
 <div align="center">
 
-**TopDock** — made with ☕ and 🎧 by [MoRinGnA](https://github.com/MoRinGnA)
+**TopDock** — by [MoRinGnA](https://github.com/MoRinGnA)
 
 </div>
