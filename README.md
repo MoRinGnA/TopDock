@@ -12,7 +12,6 @@
 [![WPF](https://img.shields.io/badge/UI-WPF-5C2D91)](https://learn.microsoft.com/dotnet/desktop/wpf/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-FF9F0A)](https://github.com/MoRinGnA/TopDock/pulls)
 
-*스크린샷 자리 — `docs/` 폴더에 캡처를 넣으면 이 자리에 표시됩니다*
 
 </div>
 
@@ -22,10 +21,10 @@
 
 노트북으로 작업하다 보면 이런 순간이 반복됩니다.
 
-> 지금 음악이 뭐지? → 미디어 플레이어 창 찾기
-> 아까 복사한 계좌번호가 뭐였지? → Win+V 뒤지기
-> 캡처한 거 다시 붙여넣고 싶은데 → 캡처 도구 다시 열기
-> 배터리 얼마나 남았지? → 알림 센터 열기
+> 지금 음악이 뭐지? → 미디어 플레이어 창 찾기 | 
+> 아까 복사한 계좌번호가 뭐였지? → Win+V 뒤지기 | 
+> 캡처한 거 다시 붙여넣고 싶은데 → 캡처 도구 다시 열기 |
+> 배터리 얼마나 남았지? → 알림 센터 열기 |
 
 **TopDock은 이 모든 것을 시선만 위로 옮기면 답이 나오게 만듭니다.**
 화면 최상단 중앙에 항상 떠 있는 작은 검은 알약이, 필요할 때만 스르륵 펼쳐집니다 —
