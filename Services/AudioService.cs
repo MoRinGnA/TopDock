@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 
-namespace WinNotch.Services
+namespace TopDock.Services
 {
     [ComImport]
     [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]

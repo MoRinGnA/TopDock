@@ -8,7 +8,7 @@ using Windows.UI.Notifications;
 using Windows.UI.Notifications.Management;
 using System.Runtime.InteropServices.WindowsRuntime;
 
-namespace WinNotch.Services
+namespace TopDock.Services
 {
     public class NotificationEventArgs : EventArgs
     {

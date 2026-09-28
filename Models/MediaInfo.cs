@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Media.Imaging;
 
-namespace WinNotch.Models
+namespace TopDock.Models
 {
     public record LyricLine(TimeSpan Time, string Text);
 

@@ -12,11 +12,11 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using WinNotch.Models;
-using WinNotch.Services;
+using TopDock.Models;
+using TopDock.Services;
 using MenuItem = System.Windows.Forms.MenuItem;
 
-namespace WinNotch
+namespace TopDock
 {
     public partial class MainWindow : Window
     {
@@ -50,12 +50,34 @@ namespace WinNotch
         private readonly LyricsService _lyricsService;
         private readonly BatteryService _batteryService;
         private readonly NotificationService _notificationService;
+        private readonly SponsorSkipService _sponsorSkip;
+        private SettingsWindow? _settingsWindow;
+        private string _lastMarkerSignature = string.Empty;
+
+        // 클립보드 히스토리 (최근 5개, 최신이 앞; 텍스트/이미지 혼합)
+        private sealed record ClipboardItem(string Text, BitmapSource? Image)
+        {
+            public bool IsImage => Image != null;
+        }
+
+        private readonly List<ClipboardItem> _clipboardHistory = new();
+        private readonly Image?[] _rowImages = new Image?[5];
+        private DispatcherTimer? _clipboardToastTimer;
+
+        // 캡처 도구가 클립보드를 연속 기록하며 생기는 중복 이미지 이벤트 필터용
+        private DateTime _lastImageCaptureAt = DateTime.MinValue;
+        // 행 클릭 등 앱 스스로 클립보드에 쓸 때 자기 복사를 새 항목으로 오판하지 않게 하는 플래그
+        private bool _suppressNextClipboardEvent;
 
         private readonly DispatcherTimer _progressTimer;
         private readonly DispatcherTimer _clockTimer;
         private DispatcherTimer? _volumeHudTimer;
         private DispatcherTimer? _notificationTimer;
+        private DispatcherTimer? _emptyMediaDebounceTimer;
         private Storyboard? _eqStoryboard;
+
+        // 트랙 전환 사이 SMTC가 잠깐 보고하는 빈 미디어를 필터링하기 위한 유예 시간
+        private static readonly TimeSpan EmptyMediaDebounceDelay = TimeSpan.FromMilliseconds(1500);
 
         private ViewMode _currentViewMode = ViewMode.IdleCompact;
         private ViewMode _viewModeBeforeNotification = ViewMode.IdleCompact;
@@ -74,11 +96,14 @@ namespace WinNotch
         {
             InitializeComponent();
 
+            ConfigService.Load();
+
             _audioService = new AudioService();
             _mediaService = new MediaService();
             _lyricsService = new LyricsService();
             _batteryService = new BatteryService();
             _notificationService = new NotificationService();
+            _sponsorSkip = new SponsorSkipService { IsEnabled = ConfigService.Current.SponsorSkipEnabled };
 
             _progressTimer = new DispatcherTimer
             {
@@ -135,10 +160,31 @@ namespace WinNotch
             {
                 try
                 {
-                    if (Clipboard.ContainsText())
+                    // 행 클릭 재복사 등 앱이 스스로 쓴 클립보드는 무시
+                    if (_suppressNextClipboardEvent)
+                    {
+                        _suppressNextClipboardEvent = false;
+                        return IntPtr.Zero;
+                    }
+
+                    // Win+Shift+S 캡처 등 이미지 우선, 없으면 텍스트
+                    if (Clipboard.ContainsImage())
+                    {
+                        var image = Clipboard.GetImage();
+                        if (image != null)
+                        {
+                            image.Freeze();
+                            Dispatcher.InvokeAsync(() => ShowClipboardToast(new ClipboardItem(string.Empty, image)));
+                        }
+                    }
+                    else if (Clipboard.ContainsText())
                     {
                         string text = Clipboard.GetText();
-                        Dispatcher.InvokeAsync(() => ShowClipboardToast(text));
+                        // 빈 문자열/공백만 있는 복사는 토스트와 히스토리 모두에서 제외
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            Dispatcher.InvokeAsync(() => ShowClipboardToast(new ClipboardItem(text, null)));
+                        }
                     }
                 }
                 catch { }
@@ -173,25 +219,149 @@ namespace WinNotch
             return IntPtr.Zero;
         }
 
-        private void ShowClipboardToast(string text)
+        private void ShowClipboardToast(ClipboardItem item)
         {
-            NotifCompactAppText.Text = "\U0001f4cb 복사됨";
-            NotifCompactTitleText.Text = text.Length > 20 ? text.Substring(0, 20) + "..." : text;
+            // 히스토리는 토스트 설정과 무관하게 항상 수집 (공백 텍스트는 제외)
+            if (item.IsImage)
+            {
+                // Win+Shift+S 등 캡처 도구는 형식별로 클립보드를 연속 기록해서
+                // 업데이트 이벤트가 짧은 간격으로 여러 번 온다 → 0.8초 내 연속 이미지는 1장으로 합침
+                var now = DateTime.UtcNow;
+                if (now - _lastImageCaptureAt < TimeSpan.FromMilliseconds(800)) return;
+                _lastImageCaptureAt = now;
+
+                try
+                {
+                    AddToHistory(item);
+                }
+                catch (Exception ex)
+                {
+                    // 해시 계산 실패 등 예외가 토스트까지 끊지 않도록 방어
+                    System.Diagnostics.Debug.WriteLine($"Clipboard image history error: {ex.Message}");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(item.Text))
+            {
+                AddToHistory(item);
+            }
+            else
+            {
+                return;
+            }
+
+            if (!ConfigService.Current.ShowClipboardToast) return;
+
+            if (item.IsImage)
+            {
+                NotifCompactAppText.Text = "\U0001F4F7 캡처됨";
+                NotifCompactTitleText.Text = $"{item.Image!.PixelWidth}×{item.Image.PixelHeight}";
+            }
+            else
+            {
+                NotifCompactAppText.Text = "\U0001f4cb 복사됨";
+                NotifCompactTitleText.Text = item.Text.Length > 20 ? item.Text.Substring(0, 20) + "..." : item.Text;
+            }
+
+            RenderClipboardHistory();
             SwitchViewMode(ViewMode.NotificationCompact);
 
-            Task.Delay(3000).ContinueWith(_ =>
+            // Task.Delay 대신 재시작 가능한 일회성 타이머로 연속 복사 시 경쟁 상태 제거
+            if (_clipboardToastTimer == null)
             {
-                Dispatcher.Invoke(() =>
+                _clipboardToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                _clipboardToastTimer.Tick += ClipboardToastTimer_Tick;
+            }
+            _clipboardToastTimer.Stop();
+            _clipboardToastTimer.Start();
+        }
+
+        private void AddToHistory(ClipboardItem item)
+        {
+            // 텍스트 중복 제거: 같은 텍스트는 맨 위로 올림
+            if (!item.IsImage)
+            {
+                _clipboardHistory.RemoveAll(i => !i.IsImage && i.Text == item.Text);
+            }
+            else
+            {
+                // 이미지도 같은 그림이면 맨 위로 (픽셀 해시 비교 — 캡처를 여러 번 떠도 1장만 유지)
+                byte[] newHash = ComputeImageHash(item.Image!);
+                _clipboardHistory.RemoveAll(i =>
                 {
-                    SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+                    if (!i.IsImage || i.Image == null) return false;
+                    byte[] oldHash = ComputeImageHash(i.Image);
+                    return HashEquals(oldHash, newHash);
                 });
-            });
+            }
+
+            _clipboardHistory.Insert(0, item);
+            if (_clipboardHistory.Count > 5) _clipboardHistory.RemoveAt(5);
+        }
+
+        // 이미지 저해상도 평균 해시 (aHash): 크기/포맷이 달라도 같은 그림이면 같은 해시
+        private static byte[] ComputeImageHash(BitmapSource image)
+        {
+            const int Size = 8;
+
+            // 비정상 이미지 방어
+            if (image.PixelWidth <= 0 || image.PixelHeight <= 0)
+                return Array.Empty<byte>();
+
+            var scaled = new TransformedBitmap(image, new ScaleTransform(
+                (double)Size / image.PixelWidth, (double)Size / image.PixelHeight));
+            var converted = new FormatConvertedBitmap(scaled, PixelFormats.Gray8, null, 0);
+
+            // Gray8 = 픽셀당 1바이트 → stride = 폭 (바이트 단위)
+            int width = converted.PixelWidth;   // 8
+            int height = converted.PixelHeight; // 8
+            int stride = width;                 // Gray8: 1 byte per pixel
+            byte[] pixels = new byte[height * stride];
+            converted.CopyPixels(pixels, stride, 0);
+
+            // 평균 밝기보다 크면 1, 작으면 0 → 64비트 해시
+            long sum = 0;
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    sum += pixels[y * stride + x];
+            double avg = (double)sum / (width * height);
+
+            byte[] hash = new byte[8];
+            int bit = 0;
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    if (pixels[y * stride + x] > avg)
+                        hash[bit / 8] |= (byte)(1 << (bit % 8));
+                    bit++;
+                }
+            }
+            return hash;
+        }
+
+        private static bool HashEquals(byte[] a, byte[] b)
+        {
+            if (a.Length == 0 || b.Length == 0) return false;
+            if (a.Length != b.Length) return false;
+            int diff = 0;
+            for (int i = 0; i < a.Length; i++)
+            {
+                int x = a[i] ^ b[i];
+                while (x != 0) { diff += x & 1; x >>= 1; } // Hamming distance
+            }
+            return diff <= 2; // 약간의 압축/리샘플 차이는 허용
+        }
+
+        private void ClipboardToastTimer_Tick(object? sender, EventArgs e)
+        {
+            _clipboardToastTimer!.Stop();
+            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
         }
 
         private void UpdatePosition()
         {
             this.Left = 0;
-            this.Top = 0;
+            this.Top = ConfigService.Current.TopMargin;
             this.Width = SystemParameters.PrimaryScreenWidth;
             this.Height = SystemParameters.PrimaryScreenHeight;
         }
@@ -221,6 +391,10 @@ namespace WinNotch
             _isExpanded = false;
             _isVolumeAdjusting = false;
             HideVolumeBarExpanded();
+
+            // 노치를 떠나면 클립보드 스트립도 즉시 정리 (높이는 SwitchViewMode가 처리)
+            _clipboardStripVisible = false;
+            ClipboardStripPanel.Visibility = Visibility.Collapsed;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (_notificationTimer != null && _notificationTimer.IsEnabled)
             {
@@ -238,26 +412,55 @@ namespace WinNotch
             e.Handled = true;
         }
 
+        private static readonly Duration AmbientColorFade = new Duration(TimeSpan.FromMilliseconds(600));
+
         private void SetAmbientColor(Color color, Color? secondaryColor = null)
         {
             Color primary = EnhanceAmbientColor(color);
-            Color secondary = secondaryColor ?? GenerateShiftedColor(primary, 32);
+            Color secondary = secondaryColor ?? GenerateShiftedColor(primary, 14);
 
             _currentAmbientColor = primary;
 
-            // Update Layer 1: Wide Diffuse Aura
-            AuraColorStop1.Color = Color.FromArgb(140, primary.R, primary.G, primary.B);
-            AuraColorStop2.Color = Color.FromArgb(45, secondary.R, secondary.G, secondary.B);
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
 
-            // Update Layer 2: Precision Rim Light
-            RimColorStop1.Color = Color.FromArgb(200, primary.R, primary.G, primary.B);
-            RimColorStop2.Color = Color.FromArgb(160, secondary.R, secondary.G, secondary.B);
+            void AnimateStop(GradientStop stop, Color to)
+            {
+                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
+                stop.BeginAnimation(GradientStop.ColorProperty, anim);
+            }
+
+            // 색은 진하게 유지하되 확산은 노치 바로 옆에 머물게 해서 '빛 안개'가 되지 않도록
+            Color aura1 = Color.FromArgb(170, primary.R, primary.G, primary.B);
+            Color aura2 = Color.FromArgb(60, secondary.R, secondary.G, secondary.B);
+            Color rim1 = Color.FromArgb(215, primary.R, primary.G, primary.B);
+            Color rim2 = Color.FromArgb(180, secondary.R, secondary.G, secondary.B);
+
+            // 트랙 전환 시 색이 뿅 바뀌지 않고 자연스럽게 크로스페이드되도록
+            if (_ambientActive)
+            {
+                AnimateStop(AuraColorStop1, aura1);
+                AnimateStop(AuraColorStop2, aura2);
+                AnimateStop(RimColorStop1, rim1);
+                AnimateStop(RimColorStop2, rim2);
+            }
+            else
+            {
+                // 첫 표시는 즉시 적용 (브레스 애니메이션 페이드인이 자연스럽게 이어줌)
+                AuraColorStop1.Color = aura1;
+                AuraColorStop2.Color = aura2;
+                RimColorStop1.Color = rim1;
+                RimColorStop2.Color = rim2;
+            }
 
             // Sync compact equalizer bars to vibrant ambient color
-            var eqBrush = new SolidColorBrush(primary);
-            EqBar1.Background = eqBrush;
-            EqBar2.Background = eqBrush;
-            EqBar3.Background = eqBrush;
+            var eqFade = new ColorAnimation { To = primary, Duration = AmbientColorFade, EasingFunction = ease };
+            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
+            {
+                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
+                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqFade);
+                else
+                    bar.Background = new SolidColorBrush(primary);
+            }
 
             if (!_ambientActive)
             {
@@ -271,10 +474,14 @@ namespace WinNotch
             _ambientActive = false;
             StopAmbientBreathAnimation();
 
-            var defaultEq = new SolidColorBrush(Color.FromRgb(255, 159, 10));
-            EqBar1.Background = defaultEq;
-            EqBar2.Background = defaultEq;
-            EqBar3.Background = defaultEq;
+            var eqRestore = new ColorAnimation { To = Color.FromRgb(255, 159, 10), Duration = TimeSpan.FromMilliseconds(400) };
+            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
+            {
+                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
+                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqRestore);
+                else
+                    bar.Background = new SolidColorBrush(Color.FromRgb(255, 159, 10));
+            }
 
             var fadeOut = new DoubleAnimation(0, TimeSpan.FromMilliseconds(400));
             NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, fadeOut);
@@ -284,7 +491,7 @@ namespace WinNotch
         {
             StopAmbientBreathAnimation();
 
-            var breathAnim = new DoubleAnimation(0.48, 0.95, TimeSpan.FromSeconds(2.6))
+            var breathAnim = new DoubleAnimation(0.62, 0.96, TimeSpan.FromSeconds(2.4))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
@@ -302,9 +509,10 @@ namespace WinNotch
 
         private void UpdateGlowDimensions(double targetWidth, double targetHeight, double targetRadius, Duration duration, IEasingFunction ease)
         {
-            double auraW = targetWidth + 70;
-            double auraH = targetHeight + 24;
-            double auraRadius = targetRadius + 10;
+            // 오로라는 노치 에지에서 20~30px 내로 빠르게 소멸하는 타이트한 헤일로
+            double auraW = targetWidth + 85;
+            double auraH = targetHeight + 28;
+            double auraRadius = targetRadius + 14;
 
             double rimW = targetWidth + 4;
             double rimH = targetHeight + 4;
@@ -410,6 +618,8 @@ namespace WinNotch
         {
             Dispatcher.Invoke(() =>
             {
+                if (!ConfigService.Current.ShowNotifications) return;
+
                 NotifCompactAppText.Text = e.AppName;
                 NotifCompactTitleText.Text = string.IsNullOrEmpty(e.Title) ? e.Body : e.Title;
                 
@@ -449,6 +659,7 @@ namespace WinNotch
         {
             _currentViewMode = mode;
 
+            // 확장은 여유 있게, 축소는 빠르게 — 모프 방향에 따라 리듬을 다르게 (targetWidth 결정 후 계산)
             Duration duration = new Duration(TimeSpan.FromMilliseconds(450));
             ExponentialEase ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
 
@@ -467,7 +678,12 @@ namespace WinNotch
                     break;
                 case ViewMode.IdleExpanded:
                     targetWidth = 260;
-                    targetHeight = 120;
+                    // 시계 확장 진입 시 클립보드 히스토리가 있으면 하단 스트립을 자동 표시
+                    if (_clipboardHistory.Count > 0)
+                    {
+                        ShowClipboardStripExpanded();
+                    }
+                    targetHeight = CalculateIdleExpandedHeight();
                     targetRadius = 26;
                     activeView = IdleExpandedView;
                     break;
@@ -514,6 +730,9 @@ namespace WinNotch
             {
                 _batteryService.ForceUpdate();
             }
+
+            bool expanding = targetWidth > NotchBorder.Width;
+            duration = new Duration(TimeSpan.FromMilliseconds(expanding ? 520 : 380));
 
             DoubleAnimation widthAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
             DoubleAnimation heightAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
@@ -587,6 +806,9 @@ namespace WinNotch
 
         private void ShowVolumeBarExpanded()
         {
+            // 볼륨 바와 클립보드 스트립이 같은 하단 슬롯을 쓰므로 상호 배타
+            HideClipboardStripExpanded(animateHeight: false);
+
             VolumeBarPanel.Visibility = Visibility.Visible;
 
             double baseHeight = HasMedia ? 190 : 120;
@@ -641,6 +863,12 @@ namespace WinNotch
                     if (_isExpanded)
                     {
                         HideVolumeBarExpanded();
+
+                        // 볼륨 조정이 끝나면 시계 모드에서 클립보드 스트립 복원
+                        if (_currentViewMode == ViewMode.IdleExpanded)
+                        {
+                            ShowClipboardStripExpanded();
+                        }
                     }
                     else
                     {
@@ -658,9 +886,13 @@ namespace WinNotch
             {
                 if (media == null || string.IsNullOrWhiteSpace(media.Title))
                 {
-                    ResetToEmptyMedia();
+                    // 트랙 전환 시 SMTC가 순간적으로 빈 미디어를 보고하는 것을 유예 시간으로 필터링.
+                    // 그 안에 새 곡이 도착하면 리셋 없이 기존 라이트에서 바로 크로스페이드됨.
+                    StartEmptyMediaDebounce();
                     return;
                 }
+
+                _emptyMediaDebounceTimer?.Stop();
 
                 string key = $"{media.Artist}:::{media.Title}";
                 bool isNewTrack = _lastMediaKey != key;
@@ -687,6 +919,9 @@ namespace WinNotch
                     {
                         SwitchViewMode(_isExpanded ? ViewMode.MediaExpanded : ViewMode.MediaCompact);
                     }
+
+                    // 새 트랙의 스폰서 구간을 백그라운드로 조회 (videoId → SponsorBlock)
+                    _ = _sponsorSkip.LoadSegmentsForTrackAsync(key, media.Title, media.Artist);
                 }
 
                 bool isValidThumbnail = false;
@@ -713,7 +948,13 @@ namespace WinNotch
                     ExpandedAlbumArtImage.Source = null;
                     ExpandedDefaultIcon.Visibility = Visibility.Visible;
 
-                    SetAmbientColor(GenerateFallbackColor(media.Title));
+                    // 썸네일이 아직 도착 전(또는 파비콘으로 필터링됨).
+                    // 제목 해시 랜덤 색 대신: 이전 곡 글로우를 유지하다가 진짜 앨범 색이 오면 크로스페이드.
+                    // 첫 곡이라 살아 있는 글로우가 없으면 절제된 중립 모노톤으로 시작.
+                    if (!_ambientActive)
+                    {
+                        SetAmbientColor(Color.FromRgb(96, 96, 104));
+                    }
 
                     if (isNewTrack)
                     {
@@ -793,11 +1034,27 @@ namespace WinNotch
         {
             ColorToHsl(c, out double h, out double s, out double l);
 
+            // 무채색 입력은 채도를 부스트하지 않고 모노톤으로 유지 (흑백 커버, 중립 글로우)
+            if (s < 0.06)
+            {
+                double monoL = Math.Clamp(l * 1.15, 0.38, 0.62);
+                return HslToColor(h, 0, monoL);
+            }
+
+            // 설정의 글로우 강도 프리셋에 따라 부스트 배수와 클램프 범위가 달라진다
+            bool subtle = ConfigService.Current.GlowIntensity == "subtle";
+            bool vivid = ConfigService.Current.GlowIntensity == "vivid";
+
+            double sMul = subtle ? 1.15 : vivid ? 1.70 : 1.45;
+            double sMin = subtle ? 0.30 : vivid ? 0.55 : 0.45;
+            double sMax = subtle ? 0.80 : vivid ? 1.00 : 0.98;
+            double lMul = subtle ? 1.10 : vivid ? 1.20 : 1.15;
+
             // 원본 앨범의 색감을 최대한 유지하면서 앰비언트 느낌만 주도록 부스팅
-            double boostedS = Math.Clamp(s * 1.3, 0.40, 0.95);
+            double boostedS = Math.Clamp(s * sMul, sMin, sMax);
 
             // 명도를 너무 심하게 좁은 구간으로 뭉개지 않고, 고유의 밝기를 살려줌
-            double tunedL = Math.Clamp(l * 1.15, 0.35, 0.75);
+            double tunedL = Math.Clamp(l * lMul, 0.35, 0.75);
 
             return HslToColor(h, boostedS, tunedL);
         }
@@ -834,6 +1091,9 @@ namespace WinNotch
                 double[] bucketSumB = new double[numBuckets];
                 double[] bucketWeights = new double[numBuckets];
 
+                double lumSum = 0;
+                int lumCount = 0;
+
                 for (int i = 0; i < pixels.Length; i += 4)
                 {
                     byte b = pixels[i];
@@ -841,6 +1101,9 @@ namespace WinNotch
                     byte r = pixels[i + 2];
 
                     ColorToHsl(Color.FromRgb(r, g, b), out double h, out double s, out double l);
+
+                    lumSum += l;
+                    lumCount++;
 
                     // 유효한 유색 픽셀 판별 (채도와 명도가 적절한 픽셀)
                     if (s >= 0.18 && l >= 0.12 && l <= 0.88)
@@ -872,15 +1135,20 @@ namespace WinNotch
 
                 if (bestBucket >= 0 && bucketWeights[bestBucket] > 0.05)
                 {
-                    Color bestColor = Color.FromRgb(
+                    // SetAmbientColor에서 EnhanceAmbientColor를 다시 적용하므로 여기서는 순수 지배색만 반환 (이중 부스팅 방지)
+                    return Color.FromRgb(
                         (byte)Math.Clamp(bucketSumR[bestBucket] / bucketWeights[bestBucket], 0, 255),
                         (byte)Math.Clamp(bucketSumG[bestBucket] / bucketWeights[bestBucket], 0, 255),
                         (byte)Math.Clamp(bucketSumB[bestBucket] / bucketWeights[bestBucket], 0, 255));
-
-                    return EnhanceAmbientColor(bestColor);
                 }
 
-                // 흑백 커버일 경우 타이틀 해시 기반 폴백
+                // 흑백/무채색 커버: 해시 폴백 대신 커버의 실제 밝기에 맞춘 모노톤 글로우
+                if (lumCount > 0)
+                {
+                    double avgL = Math.Clamp((lumSum / lumCount) * 1.15, 0.30, 0.66);
+                    return HslToColor(0, 0, avgL);
+                }
+
                 return GenerateFallbackColor(_lastMediaKey);
             }
             catch
@@ -986,12 +1254,23 @@ namespace WinNotch
             }
         }
 
+        private static readonly TimeSpan LyricLookahead = TimeSpan.FromMilliseconds(500);
+
         private void ProgressTimer_Tick(object? sender, EventArgs e)
         {
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
+                // 스폰서/인트로 등 스킵 대상 구간 진입 시 자동 건너뛰기
+                var skipTarget = _sponsorSkip.GetSkipTarget(currentPos, duration);
+                if (skipTarget.HasValue)
+                {
+                    _ = _mediaService.TrySeekAsync(skipTarget.Value);
+                }
+
                 UpdateTimelineDisplay(currentPos, duration);
-                UpdateLyricsDisplay(currentPos);
+                // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤
+                var lyricPos = _lyricsService.GetAdjustedPosition(currentPos + LyricLookahead, duration);
+                UpdateLyricsDisplay(lyricPos);
             }
         }
 
@@ -1012,7 +1291,62 @@ namespace WinNotch
                 CurrentTimeText.Text = "0:00";
                 TotalTimeText.Text = "0:00";
             }
+
+            RenderProgressMarkers(duration);
         }
+
+        private void RenderProgressMarkers(TimeSpan duration)
+        {
+            try
+            {
+                if (!(_sponsorSkip.HasSegments && duration.TotalSeconds > 0))
+                {
+                    if (ProgressMarkerCanvas.Children.Count > 0) ProgressMarkerCanvas.Children.Clear();
+                    return;
+                }
+
+                double width = ExpandedProgressBar.ActualWidth;
+                if (width <= 0) return;
+
+                // 50ms 타이머마다 재생성하지 않도록, 구성이 바뀐 경우에만 다시 그린다
+                string signature = $"{_sponsorSkip.Segments.Count}:{duration.TotalSeconds:F1}:{width:F0}";
+                if (signature == _lastMarkerSignature) return;
+                _lastMarkerSignature = signature;
+
+                ProgressMarkerCanvas.Children.Clear();
+
+                foreach (var seg in _sponsorSkip.Segments)
+                {
+                    if (seg.StartTime >= duration) continue;
+
+                    double left = Math.Clamp(seg.StartTime.TotalSeconds / duration.TotalSeconds, 0, 1) * width;
+                    double segWidth = Math.Clamp(seg.Duration.TotalSeconds / duration.TotalSeconds, 0, 1) * width;
+                    segWidth = Math.Max(3, segWidth);
+
+                    var rect = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = segWidth,
+                        Height = 4,
+                        RadiusX = 1.5,
+                        RadiusY = 1.5,
+                        Fill = GetSegmentBrush(seg.Category),
+                        Opacity = 0.9
+                    };
+                    System.Windows.Controls.Canvas.SetLeft(rect, Math.Min(left, Math.Max(0, width - 3)));
+                    ProgressMarkerCanvas.Children.Add(rect);
+                }
+            }
+            catch { }
+        }
+
+        private static Brush GetSegmentBrush(string category) => category switch
+        {
+            "music_offtopic" => new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A)),
+            "intro" => new SolidColorBrush(Color.FromRgb(0x00, 0xC7, 0xB7)),
+            "outro" => new SolidColorBrush(Color.FromRgb(0x5E, 0x5C, 0xE6)),
+            "intermission" => new SolidColorBrush(Color.FromRgb(0xBF, 0x5A, 0xF2)),
+            _ => new SolidColorBrush(Color.FromRgb(0x00, 0xD1, 0x66)) // sponsor
+        };
 
         private async Task LoadLyricsAsync(string rawTitle, string rawArtist)
         {
@@ -1038,6 +1372,141 @@ namespace WinNotch
             {
                 SwitchViewMode(ViewMode.MediaExpanded);
             }
+        }
+
+        private bool _clipboardStripVisible;
+
+        private void ClipboardRow_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is Border border && border.Tag is ClipboardItem item)
+            {
+                try
+                {
+                    // 자기 복사가 리스너에 새 항목으로 잡히는 것을 방지
+                    _suppressNextClipboardEvent = true;
+
+                    if (item.IsImage && item.Image != null)
+                        Clipboard.SetImage(item.Image);
+                    else if (!string.IsNullOrWhiteSpace(item.Text))
+                        Clipboard.SetText(item.Text);
+                }
+                catch
+                {
+                    _suppressNextClipboardEvent = false;
+                }
+            }
+        }
+
+        private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_clipboardStripVisible)
+                HideClipboardStripExpanded(animateHeight: true);
+            else
+                ShowClipboardStripExpanded();
+        }
+
+        private void RenderClipboardHistory()
+        {
+            TextBlock?[] texts = { ClipboardRowText1, ClipboardRowText2, ClipboardRowText3, ClipboardRowText4, ClipboardRowText5 };
+            Border?[] rows = { ClipboardRow1, ClipboardRow2, ClipboardRow3, ClipboardRow4, ClipboardRow5 };
+
+            int visibleCount = Math.Min(_clipboardHistory.Count, 5);
+            for (int i = 0; i < 5; i++)
+            {
+                var row = rows[i];
+                var text = texts[i];
+                if (row == null || text == null) continue;
+
+                if (i < visibleCount)
+                {
+                    var item = _clipboardHistory[i];
+
+                    if (item.IsImage)
+                    {
+                        // 행 내용을 썸네일 이미지로 교체 (행 높이는 스트립 레이아웃 유지)
+                        var img = _rowImages[i] ??= new Image
+                        {
+                            Height = 18,
+                            Stretch = Stretch.Uniform,
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        img.Source = item.Image;
+                        row.Child = img;
+                    }
+                    else
+                    {
+                        text.Text = item.Text.ReplaceLineEndings(" ").Trim();
+                        row.Child = text;
+                    }
+
+                    row.Tag = item;
+                    row.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    text.Text = string.Empty;
+                    row.Tag = null;
+                    row.Visibility = Visibility.Collapsed;
+                }
+            }
+        }
+
+        private double CalcClipboardStripHeight()
+        {
+            int rows = Math.Min(_clipboardHistory.Count, 5);
+            if (rows == 0) return 0;
+            return 38 + rows * 26; // 헤더 + 행 높이 + 패널 패딩
+        }
+
+        private void ShowClipboardStripExpanded()
+        {
+            if (_clipboardHistory.Count == 0) return;
+
+            _clipboardStripVisible = true;
+            RenderClipboardHistory();
+            ClipboardStripPanel.Visibility = Visibility.Visible;
+
+            double baseHeight = HasMedia ? 190 : 120;
+            double targetHeight = baseHeight + CalcClipboardStripHeight();
+
+            NotchBorder.BeginAnimation(Border.HeightProperty,
+                new DoubleAnimation { To = targetHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+            ClipboardStripPanel.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation { To = 1, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+            ClipboardStripTransform.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+        }
+
+        private void HideClipboardStripExpanded(bool animateHeight)
+        {
+            if (!_clipboardStripVisible) return;
+            _clipboardStripVisible = false;
+
+            if (animateHeight)
+            {
+                double baseHeight = HasMedia ? 190 : 120;
+                NotchBorder.BeginAnimation(Border.HeightProperty,
+                    new DoubleAnimation { To = baseHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+            }
+
+            var opacityAnim = new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase };
+            opacityAnim.Completed += (s, e) =>
+            {
+                if (!_clipboardStripVisible) ClipboardStripPanel.Visibility = Visibility.Collapsed;
+            };
+            ClipboardStripPanel.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
+            ClipboardStripTransform.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation { To = -10, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+        }
+
+        private double CalculateIdleExpandedHeight()
+        {
+            double baseHeight = 120;
+            if (_clipboardStripVisible && _clipboardHistory.Count > 0)
+            {
+                baseHeight += CalcClipboardStripHeight();
+            }
+            return baseHeight;
         }
 
         private void SetLyricsVisibility(bool visible)
@@ -1085,10 +1554,17 @@ namespace WinNotch
             if (activeIndex >= 0)
             {
                 string activeText = _syncedLyrics[activeIndex].Text;
+                bool lyricChanged = CurrentLyricText.Text != activeText;
                 CompactLyricText.Text = activeText;
                 PrevLyricText.Text = activeIndex > 0 ? _syncedLyrics[activeIndex - 1].Text : string.Empty;
                 CurrentLyricText.Text = activeText;
                 NextLyricText.Text = activeIndex < _syncedLyrics.Count - 1 ? _syncedLyrics[activeIndex + 1].Text : string.Empty;
+
+                // 가사가 바뀔 때 살짝 떠오르는 트랜지션
+                if (lyricChanged)
+                {
+                    AnimateLyricLine(CurrentLyricText);
+                }
 
                 if (!_isExpanded && _currentViewMode == ViewMode.MediaCompact)
                 {
@@ -1110,6 +1586,57 @@ namespace WinNotch
                 CurrentLyricText.Text = "...";
                 NextLyricText.Text = _syncedLyrics.Count > 0 ? _syncedLyrics[0].Text : string.Empty;
             }
+        }
+
+        private void AnimateLyricLine(TextBlock text)
+        {
+            var transform = text.RenderTransform as TranslateTransform;
+            if (transform == null)
+            {
+                transform = new TranslateTransform();
+                text.RenderTransform = transform;
+            }
+
+            var fade = new DoubleAnimation
+            {
+                From = 0.35,
+                To = 1,
+                Duration = TimeSpan.FromMilliseconds(260),
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut }
+            };
+            var slide = new DoubleAnimation
+            {
+                From = 7,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(300),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            Timeline.SetDesiredFrameRate(fade, 60);
+            Timeline.SetDesiredFrameRate(slide, 60);
+
+            text.BeginAnimation(UIElement.OpacityProperty, fade);
+            transform.BeginAnimation(TranslateTransform.YProperty, slide);
+        }
+
+        private void StartEmptyMediaDebounce()
+        {
+            if (_emptyMediaDebounceTimer == null)
+            {
+                _emptyMediaDebounceTimer = new DispatcherTimer { Interval = EmptyMediaDebounceDelay };
+                _emptyMediaDebounceTimer.Tick += (s, e) =>
+                {
+                    _emptyMediaDebounceTimer.Stop();
+
+                    // 유예 시간이 끝난 시점에도 여전히 미디어가 없으면 진짜 종료로 판단
+                    var current = _mediaService.CurrentMedia;
+                    if (current == null || string.IsNullOrWhiteSpace(current.Title))
+                    {
+                        ResetToEmptyMedia();
+                    }
+                };
+            }
+            _emptyMediaDebounceTimer.Stop();
+            _emptyMediaDebounceTimer.Start();
         }
 
         private void ResetToEmptyMedia()
@@ -1215,7 +1742,7 @@ namespace WinNotch
             {
                 Icon = System.Drawing.SystemIcons.Application,
                 Visible = true,
-                Text = "WinNotch"
+                Text = "TopDock"
             };
 
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
@@ -1224,11 +1751,54 @@ namespace WinNotch
                 this.Activate();
             });
 
+            contextMenu.Items.Add("설정", null, (s, e) => OpenSettings());
+
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             contextMenu.Items.Add("종료", null, (s, e) => TrayExit_Click());
 
             _trayIcon.ContextMenuStrip = contextMenu;
             _trayIcon.DoubleClick += (s, e) => this.Activate();
+        }
+
+        private void OpenSettings()
+        {
+            if (_settingsWindow != null)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
+            _settingsWindow = new SettingsWindow();
+            _settingsWindow.SettingsSaved += (s, e) => ApplySettings();
+            _settingsWindow.Closed += (s, e) => _settingsWindow = null;
+            _settingsWindow.Show();
+        }
+
+        private void ApplySettings()
+        {
+            var cfg = ConfigService.Current;
+
+            _sponsorSkip.IsEnabled = cfg.SponsorSkipEnabled;
+
+            UpdatePosition();
+
+            // 글로우 강도 변경을 현재 색에 즉시 반영
+            if (_mediaService.CurrentMedia?.Thumbnail is BitmapSource bmp && bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48)
+            {
+                SetAmbientColor(GetDominantColor(bmp));
+            }
+            else if (!HasMedia)
+            {
+                ClearAmbientLight();
+                _batteryService.ForceUpdate();
+            }
+
+            // 스폰서 카테고리 설정이 바뀌었으면 현재 트랙 구간을 다시 조회
+            if (HasMedia && _mediaService.CurrentMedia != null)
+            {
+                _ = _sponsorSkip.LoadSegmentsForTrackAsync(
+                    _lastMediaKey, _mediaService.CurrentMedia.Title, _mediaService.CurrentMedia.Artist);
+            }
         }
 
         private void TrayExit_Click()
@@ -1243,12 +1813,14 @@ namespace WinNotch
             _progressTimer.Stop();
             _clockTimer.Stop();
             _volumeHudTimer?.Stop();
+            _emptyMediaDebounceTimer?.Stop();
             StopEqualizerAnimation();
             StopAmbientBreathAnimation();
 
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero) RemoveClipboardFormatListener(hwnd);
 
+            _sponsorSkip.Dispose();
             _audioService.Dispose();
             _mediaService.Dispose();
             _lyricsService.Dispose();

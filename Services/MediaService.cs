@@ -4,9 +4,9 @@ using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 using Windows.Media.Control;
 using Windows.Storage.Streams;
-using WinNotch.Models;
+using TopDock.Models;
 
-namespace WinNotch.Services
+namespace TopDock.Services
 {
     public class MediaService : IDisposable
     {
@@ -198,6 +198,28 @@ namespace WinNotch.Services
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 지원 앱(YouTube 등)에서 재생 위치를 변경한다. (SMTC UAP/None 권한 앱에서는 실패할 수 있음)
+        /// </summary>
+        public async Task<bool> TrySeekAsync(TimeSpan position)
+        {
+            try
+            {
+                GlobalSystemMediaTransportControlsSession? session;
+                lock (_sessionLock) { session = _currentSession; }
+                session ??= _sessionManager?.GetCurrentSession();
+                if (session != null)
+                {
+                    return await session.TryChangePlaybackPositionAsync(position.Ticks);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"TrySeekAsync error: {ex.Message}");
+            }
+            return false;
         }
 
         public async Task<bool> TryTogglePlayPauseAsync()

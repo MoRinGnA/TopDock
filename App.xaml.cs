@@ -4,7 +4,7 @@ using System.Data;
 using System.Windows;
 using System.Windows.Threading;
 
-namespace WinNotch;
+namespace TopDock;
 
 /// <summary>
 /// Interaction logic for App.xaml
@@ -27,7 +27,7 @@ public partial class App : Application
     {
         MessageBox.Show(
             $"처리되지 않은 예외 발생:\n\n{e.Exception}",
-            "WinNotch - 오류",
+            "TopDock - 오류",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         e.Handled = true; // 일단 강제로 살려서 원인 메시지를 보게 함
@@ -37,7 +37,7 @@ public partial class App : Application
     {
         MessageBox.Show(
             $"치명적 예외 발생:\n\n{e.ExceptionObject}",
-            "WinNotch - 치명적 오류",
+            "TopDock - 치명적 오류",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
     }
@@ -46,7 +46,7 @@ public partial class App : Application
     {
         MessageBox.Show(
             $"백그라운드 작업 예외:\n\n{e.Exception}",
-            "WinNotch - Task 오류",
+            "TopDock - Task 오류",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         e.SetObserved();

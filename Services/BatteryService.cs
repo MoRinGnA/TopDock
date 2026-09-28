@@ -2,7 +2,7 @@ using System;
 using System.Windows.Forms;
 using System.Windows.Threading;
 
-namespace WinNotch.Services
+namespace TopDock.Services
 {
     public class BatteryStatusArgs : EventArgs
     {

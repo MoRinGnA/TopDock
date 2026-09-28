@@ -1,0 +1,58 @@
+<Window x:Class="TopDock.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TopDock 설정"
+        Width="420"
+        SizeToContent="Height"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#FAFAFA"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20,16,20,16">
+
+        <TextBlock Text="일반" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,0,0,8"/>
+        <CheckBox x:Name="ShowNotificationsCheck" Content="알림 표시"
+                  FontSize="13" Margin="0,2,0,6"/>
+        <CheckBox x:Name="ShowClipboardToastCheck" Content="클립보드 복사 토스트"
+                  FontSize="13" Margin="0,2,0,10"/>
+
+        <TextBlock Text="노치" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
+        <TextBlock Text="앰비언트 글로우 강도" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
+        <ComboBox x:Name="GlowIntensityCombo" FontSize="13" Width="180" HorizontalAlignment="Left"
+                  Margin="0,0,0,8" SelectedIndex="1">
+            <ComboBoxItem Content="절제 (Subtle)"/>
+            <ComboBoxItem Content="표준 (Standard)"/>
+            <ComboBoxItem Content="화려 (Vivid)"/>
+        </ComboBox>
+        <TextBlock Text="상단 여백 (px)" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+        <Slider x:Name="TopMarginSlider" Width="220" Minimum="0" Maximum="40"
+                IsSnapToTickEnabled="True" TickFrequency="1" VerticalAlignment="Center"
+                ValueChanged="TopMarginSlider_ValueChanged"/>
+            <TextBlock x:Name="TopMarginValueText" Text="8" FontSize="13" FontWeight="SemiBold"
+                       Margin="10,0,0,0" VerticalAlignment="Center" Width="30"/>
+        </StackPanel>
+
+        <TextBlock Text="스폰서 자동 스킵" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
+        <CheckBox x:Name="SponsorSkipEnabledCheck" Content="스폰서 구간 자동 스킵 사용"
+                  FontSize="13" Margin="0,2,0,6" Checked="SponsorSkipEnabled_Changed" Unchecked="SponsorSkipEnabled_Changed"/>
+        <StackPanel x:Name="SponsorCategoryPanel" Margin="16,0,0,0">
+            <CheckBox x:Name="SponsorSkipIntroCheck" Content="인트로 (intro)" FontSize="13" Margin="0,2,0,4"/>
+            <CheckBox x:Name="SponsorSkipOutroCheck" Content="아웃트로 (outro)" FontSize="13" Margin="0,2,0,4"/>
+            <CheckBox x:Name="SponsorSkipIntermissionCheck" Content="인터미션/자기소개 (intermission)" FontSize="13" Margin="0,2,0,4"/>
+            <CheckBox x:Name="SponsorSkipMusicOfftopicCheck" Content="음악과 무관한 구간 (music_offtopic)" FontSize="13" Margin="0,2,0,8"/>
+        </StackPanel>
+
+        <TextBlock Text="YouTube API (선택)" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
+        <TextBlock Text="API 키를 입력하면 스폰서 구간 조회가 더 정확해집니다. 없으면 HTML 검색으로 대체합니다."
+                   FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,6"/>
+        <PasswordBox x:Name="ApiKeyBox" FontSize="13" Margin="0,0,0,12"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+            <Button Content="취소" Width="80" Height="30" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button Content="저장" Width="80" Height="30" Click="Save_Click"
+                    Background="#0A84FF" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
