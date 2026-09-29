@@ -581,6 +581,14 @@ namespace TopDock
         private void Notch_MouseEnter(object sender, MouseEventArgs e)
         {
             _isExpanded = true;
+
+            // 확장되면 클립보드 스트립이 안에 붙으므로 사이드 캡슐은 물러난다 (같은 정보 이중 노출 방지)
+            if (ClipboardSideCapsule.Visibility == Visibility.Visible)
+            {
+                _clipboardToastTimer?.Stop();
+                HideClipboardSideCapsule();
+            }
+
             if (_currentViewMode == ViewMode.Assistant) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (_notificationTimer != null && _notificationTimer.IsEnabled)
