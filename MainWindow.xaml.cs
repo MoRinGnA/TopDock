@@ -408,6 +408,12 @@ namespace TopDock
         {
             // 시계 UI는 없앴지만 시각은 AI 비서 컨텍스트용으로 계속 갱신
             _currentClockText = DateTime.Now.ToString("yyyy-MM-dd dddd HH:mm");
+
+            // 대화가 열린 채로 시간대가 넘어가면 글로우 팔레트도 자동 전환 (색 크로스페이드)
+            if (_currentViewMode == ViewMode.Assistant && GlowPeriod() != _lastGlowPeriod)
+            {
+                SetAssistantGlow();
+            }
         }
 
         private string _currentClockText = string.Empty;
@@ -571,20 +577,52 @@ namespace TopDock
             // AI 비서 화면 종료 직후 복원 로직이 맡도록, 비서 화면에서는 지우지 않는다
             if (_currentViewMode == ViewMode.Assistant) return;
 
+            // 미디어가 없어도 아일랜드가 죽은 검은 알약이 되지 않게:
+            // 은은한 AI 대기광(시간대 팔레트)을 항상 켜둔다
             _ambientActive = false;
             StopAmbientBreathAnimation();
+            SetIdleGlow();
+            return;
+        }
 
-            var eqRestore = new ColorAnimation { To = Color.FromRgb(255, 159, 10), Duration = TimeSpan.FromMilliseconds(400) };
-            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
+        /// <summary>미디어 없는 평소 상태의 은은한 대기광. 낮은 강도로 항상 존재감을 유지한다.</summary>
+        private void SetIdleGlow()
+        {
+            (Color primary, Color secondary, double breatheMin, double breatheMax, double breatheSeconds) = GlowPeriod() switch
             {
-                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
-                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqRestore);
-                else
-                    bar.Background = new SolidColorBrush(Color.FromRgb(255, 159, 10));
+                0 => (Color.FromRgb(0x4C, 0x1D, 0x95), Color.FromRgb(0x1E, 0x3A, 0x8A), 0.25, 0.42, 3.6), // 밤: 딥 퍼플+네이비, 아주 잔잔
+                1 => (Color.FromRgb(0xB4, 0x74, 0x0A), Color.FromRgb(0x0C, 0x4A, 0x6E), 0.35, 0.52, 2.8), // 아침: 골드 브론즈+딥 스카이
+                3 => (Color.FromRgb(0x9F, 0x30, 0x59), Color.FromRgb(0x6B, 0x21, 0xA8), 0.32, 0.50, 3.0), // 저녁: 와인+딥 퍼플
+                _ => (Color.FromRgb(0x5B, 0x30, 0xB8), Color.FromRgb(0x0E, 0x74, 0x91), 0.35, 0.52, 2.8), // 낮: 딥 바이올렛+딥 시안
+            };
+            _lastGlowPeriod = GlowPeriod();
+
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            void AnimateStop(GradientStop stop, Color to)
+            {
+                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
+                stop.BeginAnimation(GradientStop.ColorProperty, anim);
             }
 
-            var fadeOut = new DoubleAnimation(0, TimeSpan.FromMilliseconds(400));
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+            // 대기광은 강하게 켜지 않는다 — 어두운 헤일로 정도의 존재감
+            Color aura1 = Color.FromArgb(110, primary.R, primary.G, primary.B);
+            Color aura2 = Color.FromArgb(45, secondary.R, secondary.G, secondary.B);
+            Color rim1 = Color.FromArgb(150, primary.R, primary.G, primary.B);
+            Color rim2 = Color.FromArgb(110, secondary.R, secondary.G, secondary.B);
+
+            AnimateStop(AuraColorStop1, aura1);
+            AnimateStop(AuraColorStop2, aura2);
+            AnimateStop(RimColorStop1, rim1);
+            AnimateStop(RimColorStop2, rim2);
+
+            var breathe = new DoubleAnimation(breatheMin, breatheMax, TimeSpan.FromSeconds(breatheSeconds))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease
+            };
+            Timeline.SetDesiredFrameRate(breathe, 30);
+            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathe);
         }
 
         private void StartAmbientBreathAnimation()
@@ -601,13 +639,28 @@ namespace TopDock
             NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathAnim);
         }
 
-        /// <summary>AI 전용 글로우 — 바이올렛+시안 스월: 오라가 공전하고 림에 광택이 흐른다.</summary>
+        /// <summary>AI 전용 글로우 — 시간대별 팔레트 + 스월: 오라가 공전하고 림에 광택이 흐른다.</summary>
         private Storyboard? _assistantGlowStoryboard;
+        private int _lastGlowPeriod = -1;
+
+        private static int GlowPeriod() => DateTime.Now.Hour switch
+        {
+            >= 23 or < 6 => 0, // 밤
+            < 9 => 1,          // 아침
+            < 18 => 2,         // 낮
+            _ => 3             // 저녁
+        };
 
         private void SetAssistantGlow()
         {
-            Color violet = Color.FromRgb(0x8B, 0x5C, 0xF6);
-            Color cyan = Color.FromRgb(0x22, 0xD3, 0xEE);
+            (Color primary, Color secondary, double breatheMin, double breatheMax, double breatheSeconds) = GlowPeriod() switch
+            {
+                0 => (Color.FromRgb(0x6D, 0x28, 0xD9), Color.FromRgb(0x1E, 0x40, 0xAF), 0.55, 0.80, 3.2), // 밤: 딥 바이올렛+인디고, 잔잔하게
+                1 => (Color.FromRgb(0xF5, 0x9E, 0x0B), Color.FromRgb(0x38, 0xBD, 0xF8), 0.80, 1.00, 2.0), // 아침: 골드+하늘
+                3 => (Color.FromRgb(0xFB, 0x71, 0x85), Color.FromRgb(0xA7, 0x5C, 0xF6), 0.75, 0.95, 2.4), // 저녁: 노을 핑크+퍼플
+                _ => (Color.FromRgb(0x8B, 0x5C, 0xF6), Color.FromRgb(0x22, 0xD3, 0xEE), 0.82, 1.00, 2.0), // 낮: 바이올렛+시안 (시그니처)
+            };
+            _lastGlowPeriod = GlowPeriod();
 
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
             void AnimateStop(GradientStop stop, Color to)
@@ -616,10 +669,10 @@ namespace TopDock
                 stop.BeginAnimation(GradientStop.ColorProperty, anim);
             }
 
-            Color aura1 = Color.FromArgb(200, violet.R, violet.G, violet.B);
-            Color aura2 = Color.FromArgb(90, cyan.R, cyan.G, cyan.B);
-            Color rim1 = Color.FromArgb(235, violet.R, violet.G, violet.B);
-            Color rim2 = Color.FromArgb(210, cyan.R, cyan.G, cyan.B);
+            Color aura1 = Color.FromArgb(200, primary.R, primary.G, primary.B);
+            Color aura2 = Color.FromArgb(90, secondary.R, secondary.G, secondary.B);
+            Color rim1 = Color.FromArgb(235, primary.R, primary.G, primary.B);
+            Color rim2 = Color.FromArgb(210, secondary.R, secondary.G, secondary.B);
 
             if (_ambientActive)
             {
@@ -636,13 +689,13 @@ namespace TopDock
                 RimColorStop2.Color = rim2;
             }
 
-            var eqFade = new ColorAnimation { To = violet, Duration = AmbientColorFade, EasingFunction = ease };
+            var eqFade = new ColorAnimation { To = primary, Duration = AmbientColorFade, EasingFunction = ease };
             foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
             {
                 if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
                     eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqFade);
                 else
-                    bar.Background = new SolidColorBrush(violet);
+                    bar.Background = new SolidColorBrush(primary);
             }
 
             if (!_ambientActive)
@@ -652,11 +705,11 @@ namespace TopDock
             }
 
             StopAmbientBreathAnimation();
-            StartAssistantSwirl();
+            StartAssistantSwirl(breatheMin, breatheMax, breatheSeconds);
         }
 
         /// <summary>오라 중심이 노치 주위를 공전하고 림 광택이 흐르는 스월. (검증된 PropertyPath만 사용)</summary>
-        private void StartAssistantSwirl()
+        private void StartAssistantSwirl(double breatheMin, double breatheMax, double breatheSeconds)
         {
             StopAssistantSwirl();
 
@@ -704,8 +757,8 @@ namespace TopDock
 
             _assistantGlowStoryboard.Begin();
 
-            // 4) 컨테이너 미세 브레스 (기존 패턴 재사용 — BeginAnimation)
-            var breathe = new DoubleAnimation(0.82, 1.0, TimeSpan.FromSeconds(2.0))
+            // 4) 컨테이너 미세 브레스 — 밤엔 더 잔잔하고 느리게 (기존 패턴 재사용)
+            var breathe = new DoubleAnimation(breatheMin, breatheMax, TimeSpan.FromSeconds(breatheSeconds))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
@@ -733,7 +786,7 @@ namespace TopDock
             }
             else
             {
-                ClearAmbientLight();
+                ClearAmbientLight(); // 이제 검은 알약이 아니라 대기광으로 복원됨
             }
         }
 
