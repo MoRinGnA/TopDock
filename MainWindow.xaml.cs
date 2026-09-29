@@ -151,7 +151,8 @@ namespace TopDock
             _batteryService.BatteryStatusChanged += BatteryService_BatteryStatusChanged;
             _notificationService.NotificationReceived += NotificationService_NotificationReceived;
 
-            _assistant.DeltaReceived += Assistant_DeltaReceived;
+            // 참고: DeltaReceived는 SendAssistantMessageAsync의 DeltaProxy가 유일 구독자다.
+            // 여기서도 구독하면 델타가 2번씩 붙는 버그가 생긴다.
 
             Closed += MainWindow_Closed;
 

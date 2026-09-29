@@ -102,6 +102,8 @@ namespace TopDock.Services
             sb.AppendLine("- 한국어로 대답한다.");
             sb.AppendLine("- 노치라는 좁은 공간에 표시되므로 핵심만 간결하게. 기본 2~4문장, 목록은 최대 3개 항목.");
             sb.AppendLine("- 불필요한 사족(\"네, 알겠습니다\" 등)과 이모지를 쓰지 않는다.");
+            sb.AppendLine("- 실시간 정보(날씨, 뉴스, 주가, 검색)에는 접근할 수 없다. 그런 질문엔 지어내지 말고 확인할 방법이 없다고 솔직히 말한다.");
+            sb.AppendLine("- 모르는 것은 모른다고 말한다. 그럴듯하게 꾸며내지 않는다.");
             sb.AppendLine();
             sb.AppendLine("[현재 컨텍스트]");
             sb.AppendLine($"- 시각: {c.NowText}");
