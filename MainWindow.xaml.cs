@@ -469,30 +469,30 @@ namespace TopDock
         {
             if (ClipboardSideCapsule.Visibility != Visibility.Visible) return;
 
+            double gap = 8;
+
+            // 본체가 아직 레이아웃 전(ActualWidth 0)이면 실측 좌표가 화면 좌상단을 가리킨다 —
+            // 이 경우가 시작 직후 캡슐이 좌상단에 뜨던 원인. 선언 폭 기준으로 중앙 오른쪽에 배치한다.
+            if (NotchBorder.ActualWidth < 1 || NotchBorder.ActualHeight < 1)
+            {
+                Canvas.SetLeft(ClipboardSideCapsule, ActualWidth / 2 + NotchBorder.Width / 2 + gap);
+                Canvas.SetTop(ClipboardSideCapsule, 8);
+                return;
+            }
+
             try
             {
-                // 추측 계산 대신 본체 우상단 모서리의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확
+                // 레이아웃 후에는 본체 우상단 모서리의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확
                 Point notchTopRight = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth, 0));
                 Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
                 double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-                double gap = 8; // DIP 간격
-                double left = (notchTopRight.X - canvasOrigin.X) / dpi + gap;
-                double top = (notchTopRight.Y - canvasOrigin.Y) / dpi;
 
-                // 렌더 전이라도 실측이 (0,0)을 주면 무의미한 값 — 그때만 폴백 사용
-                if (notchTopRight.X < 1 && notchTopRight.Y < 1)
-                {
-                    left = ActualWidth / 2 + NotchBorder.Width / 2 + gap;
-                    top = 8;
-                }
-
-                Canvas.SetLeft(ClipboardSideCapsule, left);
-                Canvas.SetTop(ClipboardSideCapsule, top);
+                Canvas.SetLeft(ClipboardSideCapsule, (notchTopRight.X - canvasOrigin.X) / dpi + gap);
+                Canvas.SetTop(ClipboardSideCapsule, (notchTopRight.Y - canvasOrigin.Y) / dpi);
             }
             catch
             {
-                // 좌표 확정 불가 시에도 최소한 화면 중앙 오른쪽에는 나타나게
-                Canvas.SetLeft(ClipboardSideCapsule, ActualWidth / 2 + NotchBorder.Width / 2 + 8);
+                Canvas.SetLeft(ClipboardSideCapsule, ActualWidth / 2 + NotchBorder.Width / 2 + gap);
                 Canvas.SetTop(ClipboardSideCapsule, 8);
             }
         }
