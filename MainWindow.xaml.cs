@@ -315,12 +315,16 @@ namespace TopDock
 
             RenderClipboardHistory();
 
-            // 기존: NotificationCompact로 뷰를 덮어씀 → 얼굴/미디어가 사라지는 문제.
-            // 이제: 본체 뷰는 그대로 두고 오른쪽에 사이드 캡슐이 분리 확장된다.
-            string sideText = item.IsImage
-                ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
-                : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
-            ShowClipboardSideCapsule(sideText);
+            // 확장된 아일랜드에 클립보드 스트립이 이미 붙어 있으면 캡슐 대신 스트립 행만 갱신
+            bool stripShown = _isExpanded && _clipboardStripVisible &&
+                (_currentViewMode == ViewMode.IdleExpanded || _currentViewMode == ViewMode.MediaExpanded);
+            if (!stripShown)
+            {
+                string sideText = item.IsImage
+                    ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
+                    : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
+                ShowClipboardSideCapsule(sideText);
+            }
 
             // Task.Delay 대신 재시작 가능한 일회성 타이머로 연속 복사 시 경쟁 상태 제거
             if (_clipboardToastTimer == null)
@@ -469,7 +473,8 @@ namespace TopDock
             double notchHalf = NotchBorder.ActualWidth / 2;
             double gap = 8;
             double left = screenCenterX + notchHalf + gap;
-            double top = ConfigService.Current.TopMargin + 8 + Math.Max(0, (NotchBorder.ActualHeight - 38) / 2);
+            // 창 내부 좌표 기준: 노치 컨테이너 상단 여백(8)만 더한다 (TopMargin은 창 위치라 이중 계산 아님)
+            double top = 8 + Math.Max(0, (NotchBorder.ActualHeight - 38) / 2);
 
             Canvas.SetLeft(ClipboardSideCapsule, left);
             Canvas.SetTop(ClipboardSideCapsule, top);
@@ -1079,7 +1084,7 @@ namespace TopDock
                     break;
                 case ViewMode.IdleExpanded:
                     targetWidth = 260;
-                    // 시계 확장 진입 시 클립보드 히스토리가 있으면 하단 스트립을 자동 표시
+                    // 확장 진입 시 클립보드 히스토리가 있으면 하단 스트립을 자동 표시
                     if (_clipboardHistory.Count > 0)
                     {
                         ShowClipboardStripExpanded();
@@ -1087,6 +1092,9 @@ namespace TopDock
                     targetHeight = CalculateIdleExpandedHeight();
                     targetRadius = 26;
                     activeView = IdleExpandedView;
+                    // 스트립이 붙으면 본문을 상단 정렬해 아래로 늘어난 공간과 안 겹치게
+                    IdleExpandedView.VerticalAlignment = _clipboardStripVisible ? VerticalAlignment.Top : VerticalAlignment.Center;
+                    IdleExpandedView.Margin = _clipboardStripVisible ? new Thickness(0, 18, 0, 0) : new Thickness(0);
                     break;
                 case ViewMode.MediaCompact:
                     targetWidth = CalculateCompactWidth();
