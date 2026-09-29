@@ -300,7 +300,7 @@
                                              FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                              VerticalContentAlignment="Center"
                                              KeyDown="AssistantInput_KeyDown"/>
-                                    <TextBlock x:Name="AssistantInputPlaceholder" Text="질문 입력… (Enter 전송, Esc 닫기)"
+                                    <TextBlock x:Name="AssistantInputPlaceholder" Text="무엇이든 물어보세요"
                                                Foreground="#5A5A5E" FontSize="13" FontWeight="Medium"
                                                FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                                VerticalAlignment="Center" IsHitTestVisible="False"/>
@@ -334,10 +334,6 @@
                                              HorizontalAlignment="Center" Margin="0,0,0,10"/>
                             <TextBlock x:Name="ExpandedFaceStatusText" Text="안녕, 나 여기 있어"
                                        Foreground="#FFFFFF" FontSize="16" FontWeight="Bold"
-                                       HorizontalAlignment="Center" Margin="0,0,0,4"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
-                            <TextBlock Text="클릭하거나 Ctrl+Shift+Space를 눌러 대화 시작"
-                                       Foreground="#8E8E93" FontSize="12" FontWeight="Medium"
                                        HorizontalAlignment="Center"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </StackPanel>

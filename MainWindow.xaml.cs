@@ -2196,7 +2196,7 @@ namespace TopDock
                     Dispatcher.BeginInvoke(new Action(() =>
                     {
                         OnFirstDelta();
-                        AssistantStatusText.Text = "답변 중… (Esc로 닫기)";
+                        AssistantStatusText.Text = string.Empty;
                     }));
                     Assistant_DeltaReceived(d);
                 }
@@ -2216,7 +2216,7 @@ namespace TopDock
                 {
                     _assistantAnswerBlock.Text = "(빈 응답)";
                 }
-                AssistantStatusText.Text = "Enter로 이어서 질문 · Esc로 닫기";
+                AssistantStatusText.Text = string.Empty;
             }
             catch (OperationCanceledException)
             {

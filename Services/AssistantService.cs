@@ -18,6 +18,7 @@ namespace TopDock.Services
         private const int MaxHistoryTurns = 10;
 
         private readonly AiClientService _client;
+        private readonly WeatherService _weather = new();
         private readonly List<AssistantTurn> _history = new();
         private readonly object _historyLock = new();
 
@@ -68,7 +69,7 @@ namespace TopDock.Services
                 ("user", userMessage)
             };
 
-            string full = await _client.StreamChatAsync(messages, BuildSystemPrompt(), ct).ConfigureAwait(false);
+            string full = await _client.StreamChatAsync(messages, await BuildSystemPromptAsync().ConfigureAwait(false), ct).ConfigureAwait(false);
 
             lock (_historyLock)
             {
@@ -93,9 +94,13 @@ namespace TopDock.Services
             return pairs;
         }
 
-        private string BuildSystemPrompt()
+        private async Task<string> BuildSystemPromptAsync()
         {
             AssistantContext c = _context;
+
+            // 날씨는 캐시(30분)에서 즉시, 없으면 여기서 한 번 받는다. 실패해도 계속 진행.
+            string weather = await _weather.GetSummaryAsync().ConfigureAwait(false);
+
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("너는 TopDock의 개인 비서다. TopDock은 사용자 화면 상단 중앙에 떠 있는 다이나믹 아일랜드형 노치 앱이다.");
             sb.AppendLine("답변 규칙:");
@@ -110,6 +115,7 @@ namespace TopDock.Services
             if (!string.IsNullOrWhiteSpace(c.MediaText)) sb.AppendLine($"- 재생 중: {c.MediaText}");
             if (!string.IsNullOrWhiteSpace(c.LyricText)) sb.AppendLine($"- 현재 가사: {c.LyricText}");
             if (!string.IsNullOrWhiteSpace(c.BatteryText)) sb.AppendLine($"- 배터리: {c.BatteryText}");
+            if (!string.IsNullOrWhiteSpace(weather)) sb.AppendLine($"- 현재 날씨(실측): {weather}");
             if (!string.IsNullOrWhiteSpace(c.ClipboardText)) sb.AppendLine($"- 사용자가 최근에 복사한 텍스트: {Truncate(c.ClipboardText, 600)}");
             return sb.ToString();
         }
