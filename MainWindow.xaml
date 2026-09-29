@@ -576,14 +576,17 @@
 
                 </Grid>
             </Border>
+        </Grid>
 
-            <!-- 클립보드 사이드 캡슐: 본체 중심 기준 오른쪽 바깥에 위치(X는 코드에서 본체 폭에 맞춰 계산) -->
-            <Border x:Name="ClipboardSideCapsule" HorizontalAlignment="Center" VerticalAlignment="Center"
+        <!-- 클립보드 사이드 캡슐: 레이아웃 완전 분리(Canvas) — 노치 컨테이너 폭에 영향 없음.
+             위치는 코드에서 창 중앙 + 본체 폭 기준으로 계산. -->
+        <Canvas IsHitTestVisible="True">
+            <Border x:Name="ClipboardSideCapsule" Canvas.Left="0" Canvas.Top="0"
                     Height="38" CornerRadius="19"
                     Background="#F0141416" BorderBrush="#22FFFFFF" BorderThickness="1"
                     Visibility="Collapsed" Opacity="0">
                 <Border.RenderTransform>
-                    <TranslateTransform x:Name="ClipboardSideTransform" X="26"/>
+                    <TranslateTransform x:Name="ClipboardSideTransform" X="0"/>
                 </Border.RenderTransform>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Path Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
@@ -595,6 +598,6 @@
                                VerticalAlignment="Center" Margin="0,0,15,0"/>
                 </StackPanel>
             </Border>
-        </Grid>
+        </Canvas>
     </Grid>
 </Window>
