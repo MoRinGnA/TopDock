@@ -469,15 +469,24 @@ namespace TopDock
         {
             if (ClipboardSideCapsule.Visibility != Visibility.Visible) return;
 
-            double screenCenterX = ActualWidth / 2;
-            double notchHalf = NotchBorder.ActualWidth / 2;
-            double gap = 8;
-            double left = screenCenterX + notchHalf + gap;
-            // 창 내부 좌표 기준: 노치 컨테이너 상단 여백(8)만 더한다 (TopMargin은 창 위치라 이중 계산 아님)
-            double top = 8 + Math.Max(0, (NotchBorder.ActualHeight - 38) / 2);
+            try
+            {
+                // 추측 계산 대신 본체 우상단 모서리의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확
+                Point notchTopRight = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth, 0));
+                Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
 
-            Canvas.SetLeft(ClipboardSideCapsule, left);
-            Canvas.SetTop(ClipboardSideCapsule, top);
+                double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                double gap = 8; // DIP 간격
+                double left = (notchTopRight.X - canvasOrigin.X) / dpi + gap;
+                double top = (notchTopRight.Y - canvasOrigin.Y) / dpi;
+
+                Canvas.SetLeft(ClipboardSideCapsule, left);
+                Canvas.SetTop(ClipboardSideCapsule, top);
+            }
+            catch
+            {
+                // 윈도우 로드 전 등 좌표 미확정 시 무시 — 다음 렌더 프레임에서 재시도
+            }
         }
 
         private void HideClipboardSideCapsule()

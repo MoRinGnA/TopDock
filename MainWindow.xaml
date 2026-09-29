@@ -170,7 +170,7 @@
     </Window.Resources>
 
     <!-- Root grid: full screen overlay -->
-    <Grid>
+    <Grid x:Name="RootGrid">
 
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
