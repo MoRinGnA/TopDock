@@ -421,17 +421,8 @@ namespace TopDock
         {
             ClipboardSideText.Text = text;
             ClipboardSideCapsule.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double capsuleW = ClipboardSideCapsule.DesiredSize.Width;
 
-            // 창(전체 화면) 중앙 기준: 본체 오른쪽 바깥에 절대 배치 (레이아웃 간섭 없음)
-            double screenCenterX = ActualWidth / 2;
-            double notchHalf = NotchBorder.ActualWidth / 2;
-            double gap = 8;
-            double left = screenCenterX + notchHalf + gap; // 캡슐 좌변이 본체 우변에서 gap 떨어짐
-            double top = ConfigService.Current.TopMargin + 8 + (NotchBorder.ActualHeight - 38) / 2;
-
-            Canvas.SetLeft(ClipboardSideCapsule, left);
-            Canvas.SetTop(ClipboardSideCapsule, top);
+            RepositionClipboardSideCapsule();
 
             // 스윕 진입: 본체 쪽에서 26px 흘러나오듯
             ClipboardSideTransform.X = -26;
@@ -449,10 +440,47 @@ namespace TopDock
             ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
         }
 
+        // 캡슐 추적 루프: 본체가 애니메이션 중인 동안 매 프레임 위치 재계산
+        private bool _capsuleTrackingActive;
+
+        private void StartCapsuleTracking()
+        {
+            if (_capsuleTrackingActive) return;
+            _capsuleTrackingActive = true;
+            CompositionTarget.Rendering += CapsuleTracking_Rendering;
+        }
+
+        private void StopCapsuleTracking()
+        {
+            if (!_capsuleTrackingActive) return;
+            _capsuleTrackingActive = false;
+            CompositionTarget.Rendering -= CapsuleTracking_Rendering;
+        }
+
+        private void CapsuleTracking_Rendering(object? sender, EventArgs e)
+        {
+            RepositionClipboardSideCapsule();
+        }
+        private void RepositionClipboardSideCapsule()
+        {
+            if (ClipboardSideCapsule.Visibility != Visibility.Visible) return;
+
+            double screenCenterX = ActualWidth / 2;
+            double notchHalf = NotchBorder.ActualWidth / 2;
+            double gap = 8;
+            double left = screenCenterX + notchHalf + gap;
+            double top = ConfigService.Current.TopMargin + 8 + Math.Max(0, (NotchBorder.ActualHeight - 38) / 2);
+
+            Canvas.SetLeft(ClipboardSideCapsule, left);
+            Canvas.SetTop(ClipboardSideCapsule, top);
+        }
+
         private void HideClipboardSideCapsule()
         {
             var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 5 };
             var dur = new Duration(TimeSpan.FromMilliseconds(320));
+
+            StopCapsuleTracking();
 
             var opacity = new DoubleAnimation(0, dur) { EasingFunction = ease };
             var slide = new DoubleAnimation(26, dur) { EasingFunction = ease }; // 오른쪽 바깥으로 스윕 아웃
@@ -1121,6 +1149,12 @@ namespace TopDock
 
             NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
             NotchBorder.BeginAnimation(Border.HeightProperty, heightAnim);
+
+            // 클립보드 캡슐이 떠 있는 동안 본체 크기 변화를 실시간 추적
+            if (ClipboardSideCapsule.Visibility == Visibility.Visible)
+            {
+                StartCapsuleTracking();
+            }
 
             UpdateGlowDimensions(targetWidth, targetHeight, targetRadius, duration, ease);
 
@@ -2525,6 +2559,8 @@ namespace TopDock
                 RemoveClipboardFormatListener(hwnd);
                 UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
             }
+
+            StopCapsuleTracking();
 
             _assistantCts?.Cancel();
             _assistant.ResetConversation();
