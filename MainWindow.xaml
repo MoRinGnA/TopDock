@@ -279,6 +279,13 @@
                                            Foreground="#8E8E93" FontSize="11" FontWeight="SemiBold"
                                            VerticalAlignment="Center"
                                            FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                <Button x:Name="AssistantCloseButton" Style="{StaticResource AppleButton}"
+                                        Width="24" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Margin="0,-4,-2,0" Opacity="0.6" Cursor="Hand"
+                                        Click="AssistantCloseButton_Click">
+                                    <Path Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+                                          Fill="#C8C8CC" Width="11" Height="11" Stretch="Uniform"/>
+                                </Button>
                             </StackPanel>
 
                             <!-- 스크롤바는 숨기고 휠/자동 스크롤로만 탐색 — 채팅 UX 표준 -->
@@ -568,6 +575,25 @@
                     </Border>
 
                 </Grid>
+            </Border>
+
+            <!-- 클립보드 사이드 캡슐: 본체 오른쪽에서 분리돼 슬라이드 인 (본체는 그대로) -->
+            <Border x:Name="ClipboardSideCapsule" HorizontalAlignment="Right" VerticalAlignment="Center"
+                    Height="38" CornerRadius="19" Margin="7,0,0,0"
+                    Background="#F0141416" BorderBrush="#22FFFFFF" BorderThickness="1"
+                    Visibility="Collapsed" Opacity="0">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="ClipboardSideTransform" X="26"/>
+                </Border.RenderTransform>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Path Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                          Fill="#0A84FF" Width="12" Height="12" Stretch="Uniform"
+                          VerticalAlignment="Center" Margin="15,0,8,0"/>
+                    <TextBlock x:Name="ClipboardSideText" Text=""
+                               Foreground="#E8FFFFFF" FontSize="12.5" FontWeight="Medium"
+                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
+                               VerticalAlignment="Center" Margin="0,0,15,0"/>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

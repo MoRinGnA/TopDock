@@ -165,6 +165,19 @@ namespace TopDock
             SwitchViewMode(ViewMode.IdleCompact);
         }
 
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            base.OnPreviewKeyDown(e);
+
+            // 비서 화면에서는 포커스 위치와 무관하게 Esc로 닫기 (입력창이 먼저 받아도 무방)
+            if (e.Key == Key.Escape && _currentViewMode == ViewMode.Assistant)
+            {
+                if (_assistantBusy) _assistantCts?.Cancel();
+                CloseAssistant();
+                e.Handled = true;
+            }
+        }
+
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
@@ -301,7 +314,13 @@ namespace TopDock
             }
 
             RenderClipboardHistory();
-            SwitchViewMode(ViewMode.NotificationCompact);
+
+            // 기존: NotificationCompact로 뷰를 덮어씀 → 얼굴/미디어가 사라지는 문제.
+            // 이제: 본체 뷰는 그대로 두고 오른쪽에 사이드 캡슐이 분리 확장된다.
+            string sideText = item.IsImage
+                ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
+                : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
+            ShowClipboardSideCapsule(sideText);
 
             // Task.Delay 대신 재시작 가능한 일회성 타이머로 연속 복사 시 경쟁 상태 제거
             if (_clipboardToastTimer == null)
@@ -393,7 +412,45 @@ namespace TopDock
         private void ClipboardToastTimer_Tick(object? sender, EventArgs e)
         {
             _clipboardToastTimer!.Stop();
-            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+            HideClipboardSideCapsule();
+        }
+
+        // ── 클립보드 사이드 캡슐 (본체 오른쪽에서 분리 확장) ──
+
+        private void ShowClipboardSideCapsule(string text)
+        {
+            ClipboardSideText.Text = text;
+            ClipboardSideCapsule.Visibility = Visibility.Visible;
+
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
+            var dur = new Duration(TimeSpan.FromMilliseconds(420));
+
+            var opacity = new DoubleAnimation(1, dur) { EasingFunction = ease };
+            var slide = new DoubleAnimation(0, dur) { EasingFunction = ease }; // X 26 → 0: 본체에서 흘러나오듯
+            Timeline.SetDesiredFrameRate(opacity, 60);
+            Timeline.SetDesiredFrameRate(slide, 60);
+
+            ClipboardSideCapsule.BeginAnimation(OpacityProperty, opacity);
+            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
+        }
+
+        private void HideClipboardSideCapsule()
+        {
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 5 };
+            var dur = new Duration(TimeSpan.FromMilliseconds(320));
+
+            var opacity = new DoubleAnimation(0, dur) { EasingFunction = ease };
+            var slide = new DoubleAnimation(26, dur) { EasingFunction = ease };
+            opacity.Completed += (s, e) =>
+            {
+                if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
+                {
+                    ClipboardSideCapsule.Visibility = Visibility.Collapsed;
+                }
+            };
+
+            ClipboardSideCapsule.BeginAnimation(OpacityProperty, opacity);
+            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
         }
 
         private void UpdatePosition()
@@ -480,7 +537,7 @@ namespace TopDock
 
         private void Notch_MouseLeave(object sender, MouseEventArgs e)
         {
-            // AI 비서 대화 중에는 마우스가 벗어나도 닫지 않는다
+            // AI 비서 대화 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
             if (_currentViewMode == ViewMode.Assistant)
             {
                 _isVolumeAdjusting = false;
@@ -2419,6 +2476,16 @@ namespace TopDock
             }
 
             return context == null ? $"{timePart} 나 여기 있어. 뭐 도와줄까?" : $"{timePart} {context}";
+        }
+
+        private void AssistantCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_assistantBusy)
+            {
+                // 생성 중이면 요청을 취소하고 창도 닫는다
+                _assistantCts?.Cancel();
+            }
+            CloseAssistant();
         }
 
         private void ClearAssistantConversation()
