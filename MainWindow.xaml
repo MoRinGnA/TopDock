@@ -579,11 +579,12 @@
         </Grid>
 
         <!-- 클립보드 사이드 캡슐: 레이아웃 완전 분리(Canvas) — 노치 컨테이너 폭에 영향 없음.
-             위치는 코드에서 창 중앙 + 본체 폭 기준으로 계산. -->
+             외형은 DarkNotchStyle(아일랜드)과 동일한 배경/테두리/그림자. 위치는 코드에서 실측. -->
         <Canvas IsHitTestVisible="True">
             <Border x:Name="ClipboardSideCapsule" Canvas.Left="0" Canvas.Top="0"
                     Height="38" CornerRadius="19"
-                    Background="#F0141416" BorderBrush="#22FFFFFF" BorderThickness="1"
+                    Background="#0C0C0E" BorderThickness="1"
+                    Style="{StaticResource DarkNotchStyle}"
                     Visibility="Collapsed" Opacity="0">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="ClipboardSideTransform" X="0"/>
