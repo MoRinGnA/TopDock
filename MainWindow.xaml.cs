@@ -420,13 +420,24 @@ namespace TopDock
         private void ShowClipboardSideCapsule(string text)
         {
             ClipboardSideText.Text = text;
+
+            // 본체(NotchBorder) 오른쪽 바깥에 붙이기: 컨테이너 중심에서 본체 반폭 + 간격만큼 이동
+            // (HorizontalAlignment=Center 기준이므로 좌표는 컨테이너 중심 상대)
+            ClipboardSideCapsule.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double capsuleHalf = ClipboardSideCapsule.DesiredSize.Width / 2;
+            double notchHalf = NotchBorder.ActualWidth / 2;
+            double gap = 8;
+            double baseX = notchHalf + gap + capsuleHalf; // 캡슐 좌변이 본체 우변에서 gap 떨어지게
+
+            // 스윕 진입: 본체 안쪽에서 흘러나오듯 26px 이동
+            ClipboardSideTransform.X = baseX + 26;
             ClipboardSideCapsule.Visibility = Visibility.Visible;
 
             var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
             var dur = new Duration(TimeSpan.FromMilliseconds(420));
 
             var opacity = new DoubleAnimation(1, dur) { EasingFunction = ease };
-            var slide = new DoubleAnimation(0, dur) { EasingFunction = ease }; // X 26 → 0: 본체에서 흘러나오듯
+            var slide = new DoubleAnimation(baseX, dur) { EasingFunction = ease }; // 최종 위치로 슬라이드
             Timeline.SetDesiredFrameRate(opacity, 60);
             Timeline.SetDesiredFrameRate(slide, 60);
 
@@ -440,7 +451,8 @@ namespace TopDock
             var dur = new Duration(TimeSpan.FromMilliseconds(320));
 
             var opacity = new DoubleAnimation(0, dur) { EasingFunction = ease };
-            var slide = new DoubleAnimation(26, dur) { EasingFunction = ease };
+            double exitX = ClipboardSideTransform.X + 26; // 현재 위치에서 오른쪽으로 스윕 아웃
+            var slide = new DoubleAnimation(exitX, dur) { EasingFunction = ease };
             opacity.Completed += (s, e) =>
             {
                 if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
