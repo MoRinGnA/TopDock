@@ -20,7 +20,7 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
-        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded }
+        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded, Assistant }
 
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -28,6 +28,21 @@ namespace TopDock
         private const int HTTRANSPARENT = -1;
 
         private const double VolumeBarExtraHeight = 54;
+
+        // AI 비서 전역 핫키: Ctrl+Shift+Space
+        private const int HOTKEY_ID_ASSISTANT = 0xB00B;
+        private const uint MOD_CONTROL = 0x0002;
+        private const uint MOD_SHIFT = 0x0004;
+        private const uint MOD_NOREPEAT = 0x4000;
+        private const int WM_HOTKEY = 0x0312;
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
 
         [DllImport("user32.dll")]
         private static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -51,8 +66,16 @@ namespace TopDock
         private readonly BatteryService _batteryService;
         private readonly NotificationService _notificationService;
         private readonly SponsorSkipService _sponsorSkip;
+        private readonly AssistantService _assistant;
         private SettingsWindow? _settingsWindow;
         private string _lastMarkerSignature = string.Empty;
+
+        // ── AI 비서 상태 ──
+        private CancellationTokenSource? _assistantCts;
+        private bool _assistantBusy;
+        private TextBlock? _assistantAnswerBlock;
+        private float _lastBatteryPercent = -1;
+        private bool _lastBatteryCharging;
 
         // 클립보드 히스토리 (최근 5개, 최신이 앞; 텍스트/이미지 혼합)
         private sealed record ClipboardItem(string Text, BitmapSource? Image)
@@ -104,6 +127,7 @@ namespace TopDock
             _batteryService = new BatteryService();
             _notificationService = new NotificationService();
             _sponsorSkip = new SponsorSkipService { IsEnabled = ConfigService.Current.SponsorSkipEnabled };
+            _assistant = new AssistantService();
 
             _progressTimer = new DispatcherTimer
             {
@@ -126,6 +150,8 @@ namespace TopDock
 
             _batteryService.BatteryStatusChanged += BatteryService_BatteryStatusChanged;
             _notificationService.NotificationReceived += NotificationService_NotificationReceived;
+
+            _assistant.DeltaReceived += Assistant_DeltaReceived;
 
             Closed += MainWindow_Closed;
 
@@ -151,11 +177,22 @@ namespace TopDock
 
             AddClipboardFormatListener(hwnd);
 
+            // AI 비서 전역 핫키 등록 (Ctrl+Shift+Space)
+            if (ConfigService.Current.AssistantEnabled)
+            {
+                RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
+            }
+
             UpdatePosition();
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID_ASSISTANT)
+            {
+                Dispatcher.Invoke(OpenAssistant);
+                return (IntPtr)1;
+            }
             if (msg == WM_CLIPBOARDUPDATE)
             {
                 try
@@ -377,6 +414,7 @@ namespace TopDock
         private void Notch_MouseEnter(object sender, MouseEventArgs e)
         {
             _isExpanded = true;
+            if (_currentViewMode == ViewMode.Assistant) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (_notificationTimer != null && _notificationTimer.IsEnabled)
             {
@@ -388,6 +426,13 @@ namespace TopDock
 
         private void Notch_MouseLeave(object sender, MouseEventArgs e)
         {
+            // AI 비서 대화 중에는 마우스가 벗어나도 닫지 않는다
+            if (_currentViewMode == ViewMode.Assistant)
+            {
+                _isVolumeAdjusting = false;
+                HideVolumeBarExpanded();
+                return;
+            }
             _isExpanded = false;
             _isVolumeAdjusting = false;
             HideVolumeBarExpanded();
@@ -416,6 +461,9 @@ namespace TopDock
 
         private void SetAmbientColor(Color color, Color? secondaryColor = null)
         {
+            // AI 비서 화면에서는 전용 글로우가 켜져 있으므로 앨범 색이 그것을 덮지 않게 한다
+            if (_currentViewMode == ViewMode.Assistant) return;
+
             Color primary = EnhanceAmbientColor(color);
             Color secondary = secondaryColor ?? GenerateShiftedColor(primary, 14);
 
@@ -471,6 +519,9 @@ namespace TopDock
 
         private void ClearAmbientLight()
         {
+            // AI 비서 화면 종료 직후 복원 로직이 맡도록, 비서 화면에서는 지우지 않는다
+            if (_currentViewMode == ViewMode.Assistant) return;
+
             _ambientActive = false;
             StopAmbientBreathAnimation();
 
@@ -499,6 +550,80 @@ namespace TopDock
             };
             Timeline.SetDesiredFrameRate(breathAnim, 30);
             NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathAnim);
+        }
+
+        /// <summary>AI 전용 글로우 — 바이올렛+시안 시그니처 색, 더 밝고 빠른 펄스.</summary>
+        private void SetAssistantGlow()
+        {
+            Color violet = Color.FromRgb(0x8B, 0x5C, 0xF6);
+            Color cyan = Color.FromRgb(0x22, 0xD3, 0xEE);
+
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            void AnimateStop(GradientStop stop, Color to)
+            {
+                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
+                stop.BeginAnimation(GradientStop.ColorProperty, anim);
+            }
+
+            Color aura1 = Color.FromArgb(190, violet.R, violet.G, violet.B);
+            Color aura2 = Color.FromArgb(80, cyan.R, cyan.G, cyan.B);
+            Color rim1 = Color.FromArgb(230, violet.R, violet.G, violet.B);
+            Color rim2 = Color.FromArgb(200, cyan.R, cyan.G, cyan.B);
+
+            if (_ambientActive)
+            {
+                AnimateStop(AuraColorStop1, aura1);
+                AnimateStop(AuraColorStop2, aura2);
+                AnimateStop(RimColorStop1, rim1);
+                AnimateStop(RimColorStop2, rim2);
+            }
+            else
+            {
+                AuraColorStop1.Color = aura1;
+                AuraColorStop2.Color = aura2;
+                RimColorStop1.Color = rim1;
+                RimColorStop2.Color = rim2;
+            }
+
+            // 이퀄라이저 바도 AI 색으로 동기화 (미디어 없이 비서만 켜진 경우 대비)
+            var eqFade = new ColorAnimation { To = violet, Duration = AmbientColorFade, EasingFunction = ease };
+            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
+            {
+                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
+                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqFade);
+                else
+                    bar.Background = new SolidColorBrush(violet);
+            }
+
+            if (!_ambientActive)
+            {
+                _ambientActive = true;
+                NotchAmbientContainer.Opacity = 0.75;
+            }
+
+            // 미디어 브레스(2.4s)와 구별되는 더 밝고 빠른 펄스
+            StopAmbientBreathAnimation();
+            var pulse = new DoubleAnimation(0.75, 1.0, TimeSpan.FromSeconds(1.6))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+            };
+            Timeline.SetDesiredFrameRate(pulse, 30);
+            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, pulse);
+        }
+
+        /// <summary>비서 화면을 나간 뒤 이전 글로우(앨범 색 또는 없음)로 복원.</summary>
+        private void RestoreGlowAfterAssistant()
+        {
+            if (_mediaService.CurrentMedia?.Thumbnail is BitmapSource bmp && bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48)
+            {
+                SetAmbientColor(GetDominantColor(bmp));
+            }
+            else
+            {
+                ClearAmbientLight();
+            }
         }
 
         private void StopAmbientBreathAnimation()
@@ -567,6 +692,10 @@ namespace TopDock
 
         private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
         {
+            // AI 비서 컨텍스트용 최신 배터리 상태 유지
+            _lastBatteryPercent = e.BatteryPercent;
+            _lastBatteryCharging = e.IsCharging;
+
             Dispatcher.Invoke(() =>
             {
                 bool isNormal = !e.IsCharging && e.BatteryPercent > 0.20f;
@@ -640,6 +769,13 @@ namespace TopDock
                     _notificationTimer.Tick += (s, args) =>
                     {
                         _notificationTimer.Stop();
+                        // 알림이 비서 대화를 잠시 가린 경우라면 비서 화면으로 되돌아간다
+                        if (_viewModeBeforeNotification == ViewMode.Assistant)
+                        {
+                            SwitchViewMode(ViewMode.Assistant);
+                            SetAssistantGlow();
+                            return;
+                        }
                         if (_isExpanded)
                         {
                             SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
@@ -717,6 +853,12 @@ namespace TopDock
                     targetRadius = 32;
                     activeView = NotificationExpandedView;
                     break;
+                case ViewMode.Assistant:
+                    targetWidth = 470;
+                    targetHeight = 320;
+                    targetRadius = 36;
+                    activeView = AssistantView;
+                    break;
             }
 
             SetViewActive(activeView, duration, ease);
@@ -752,7 +894,7 @@ namespace TopDock
 
         private void SetViewActive(UIElement activeView, Duration duration, IEasingFunction ease)
         {
-            UIElement[] views = { VolumeHudView, IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView };
+            UIElement[] views = { VolumeHudView, IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView };
             Duration fadeOutDuration = new Duration(TimeSpan.FromMilliseconds(150));
 
             foreach (var view in views)
@@ -1780,6 +1922,17 @@ namespace TopDock
 
             _sponsorSkip.IsEnabled = cfg.SponsorSkipEnabled;
 
+            // AI 비서 핫키 등록 상태를 설정과 동기화
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
+                if (cfg.AssistantEnabled)
+                {
+                    RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
+                }
+            }
+
             UpdatePosition();
 
             // 글로우 강도 변경을 현재 색에 즉시 반영
@@ -1808,6 +1961,225 @@ namespace TopDock
             System.Windows.Application.Current.Shutdown();
         }
 
+        // ────────────────────────── AI 비서 ──────────────────────────
+
+        /// <summary>핫키/클릭으로 비서를 연다. 이미 열려 있으면 닫는다(토글).</summary>
+        private void OpenAssistant()
+        {
+            if (!ConfigService.Current.AssistantEnabled)
+            {
+                Log.Info("Assistant hotkey ignored: disabled in settings");
+                return;
+            }
+            if (_assistantBusy)
+            {
+                // 답변 생성 중이면 무시 (의도치 않은 취소 방지)
+                return;
+            }
+            if (_currentViewMode == ViewMode.Assistant)
+            {
+                CloseAssistant();
+                return;
+            }
+
+            _isExpanded = true;
+            AssistantStatusText.Text = "무엇이든 물어보세요";
+            SwitchViewMode(ViewMode.Assistant);
+            SetAssistantGlow();
+
+            // 스위치 애니메이션 이후 포커스 (노치가 Topmost 투명 오버레이라 스스로 활성화 필요)
+            ActivateSelfAndFocusInput();
+        }
+
+        private void CloseAssistant()
+        {
+            AssistantInputBox.Clear();
+            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+
+            // _currentViewMode가 이미 바뀐 뒤 복원해야 미디어 글로우가 살아난다
+            RestoreGlowAfterAssistant();
+        }
+
+        private void ActivateSelfAndFocusInput()
+        {
+            try { Activate(); } catch { }
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                AssistantInputBox.Focus();
+                AssistantInputBox.CaretIndex = AssistantInputBox.Text.Length;
+            }), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        /// <summary>확장 크기에서 벗어나면 자동으로 닫히도록 하는 마우스 이탈 처리 포함.</summary>
+        private void AssistantInput_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                CloseAssistant();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Enter && !_assistantBusy)
+            {
+                string text = AssistantInputBox.Text.Trim();
+                if (text.Length > 0)
+                {
+                    _ = SendAssistantMessageAsync(text);
+                }
+                e.Handled = true;
+            }
+        }
+
+        private async System.Threading.Tasks.Task SendAssistantMessageAsync(string userMessage)
+        {
+            if (_assistantBusy) return;
+            _assistantBusy = true;
+            _assistantCts = new CancellationTokenSource();
+
+            AssistantInputBox.Clear();
+            AssistantInputPlaceholder.Visibility = Visibility.Collapsed;
+            AssistantStatusText.Text = "생각 중…";
+
+            // 질문 bubble
+            AppendAssistantBubble(userMessage, isUser: true);
+
+            // 답변 bubble (스트리밍 대상)
+            _assistantAnswerBlock = AppendAssistantBubble(string.Empty, isUser: false);
+
+            UpdateAssistantContext();
+            Log.Info($"Assistant query: {userMessage}");
+
+            try
+            {
+                string answer = await _assistant.SendAsync(userMessage, _assistantCts.Token).ConfigureAwait(true);
+                Log.Info($"Assistant answer length: {answer.Length}");
+                if (_assistantAnswerBlock != null && string.IsNullOrEmpty(_assistantAnswerBlock.Text))
+                {
+                    _assistantAnswerBlock.Text = "(빈 응답)";
+                }
+                AssistantStatusText.Text = "Enter로 이어서 질문 · Esc로 닫기";
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Info("Assistant request cancelled");
+            }
+            catch (AiException ex)
+            {
+                Log.Error("Assistant request failed", ex);
+                if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ " + ex.Message;
+                AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Assistant unexpected error", ex);
+                if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
+                AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
+            }
+            finally
+            {
+                _assistantBusy = false;
+            }
+        }
+
+        private void Assistant_DeltaReceived(string delta)
+        {
+            // 네트워크 스레드 → UI 스레드
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_assistantAnswerBlock == null) return;
+                _assistantAnswerBlock.Inlines.Add(delta);
+
+                // 말줄임 없이 부드러운 자동 스크롤
+                AssistantScroll.ScrollToEnd();
+            }));
+        }
+
+        private void UpdateAssistantContext()
+        {
+            string mediaText = string.Empty;
+            string lyricText = string.Empty;
+            var media = _mediaService.CurrentMedia;
+            if (media != null && !string.IsNullOrWhiteSpace(media.Title) && media.Title != "재생 중인 미디어 없음")
+            {
+                mediaText = $"{media.Title}" + (string.IsNullOrWhiteSpace(media.Artist) ? "" : $" - {media.Artist}");
+
+                // 현재 재생 위치의 가사 줄
+                if (_syncedLyrics.Count > 0)
+                {
+                    var mediaPos = media.CurrentEstimatedPosition;
+                    LyricLine? current = null;
+                    foreach (LyricLine line in _syncedLyrics)
+                    {
+                        if (line.Time <= mediaPos) current = line; else break;
+                    }
+                    if (current != null && !string.IsNullOrWhiteSpace(current.Text))
+                    {
+                        lyricText = current.Text;
+                    }
+                }
+            }
+
+            string batteryText = _lastBatteryPercent >= 0
+                ? $"{_lastBatteryPercent * 100:0}%" + (_lastBatteryCharging ? " (충전 중)" : "")
+                : string.Empty;
+
+            string clipboardText = string.Empty;
+            if (_clipboardHistory.Count > 0)
+            {
+                ClipboardItem last = _clipboardHistory[0];
+                if (!last.IsImage) clipboardText = last.Text;
+            }
+
+            _assistant.UpdateContext(new AssistantContext(
+                NowText: DateTime.Now.ToString("yyyy-MM-dd dddd HH:mm"),
+                MediaText: mediaText,
+                LyricText: lyricText,
+                BatteryText: batteryText,
+                ClipboardText: clipboardText));
+        }
+
+        private TextBlock AppendAssistantBubble(string text, bool isUser)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(isUser ? Color.FromArgb(0x28, 0x0A, 0x84, 0xFF) : Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10, 6, 10, 6),
+                Margin = new Thickness(0, 3, 0, 3),
+                HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+                MaxWidth = 420,
+            };
+            var block = new TextBlock
+            {
+                Text = text,
+                Foreground = new SolidColorBrush(Colors.White),
+                FontSize = 12.5,
+                FontWeight = isUser ? FontWeights.SemiBold : FontWeights.Medium,
+                TextWrapping = TextWrapping.Wrap,
+                FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI, -apple-system"),
+            };
+            border.Child = block;
+            AssistantConversationPanel.Children.Add(border);
+            AssistantScroll.ScrollToEnd();
+            return block;
+        }
+
+        private void Assistant_NotchClick(object sender, MouseButtonEventArgs e)
+        {
+            // 어느 뷰든 노치 본체 클릭 시 비서 호출 (비서 화면 제외)
+            if (_currentViewMode != ViewMode.Assistant)
+            {
+                OpenAssistant();
+            }
+        }
+
+        private void ClearAssistantConversation()
+        {
+            AssistantConversationPanel.Children.Clear();
+            _assistantAnswerBlock = null;
+            AssistantInputPlaceholder.Visibility = Visibility.Visible;
+        }
+
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
             _progressTimer.Stop();
@@ -1818,7 +2190,14 @@ namespace TopDock
             StopAmbientBreathAnimation();
 
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
-            if (hwnd != IntPtr.Zero) RemoveClipboardFormatListener(hwnd);
+            if (hwnd != IntPtr.Zero)
+            {
+                RemoveClipboardFormatListener(hwnd);
+                UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
+            }
+
+            _assistantCts?.Cancel();
+            _assistant.ResetConversation();
 
             _sponsorSkip.Dispose();
             _audioService.Dispose();

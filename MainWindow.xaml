@@ -186,6 +186,7 @@
                     Style="{StaticResource DarkNotchStyle}"
                     MouseEnter="Notch_MouseEnter"
                     MouseLeave="Notch_MouseLeave"
+                    MouseLeftButtonUp="Assistant_NotchClick"
                     PreviewMouseWheel="Notch_PreviewMouseWheel">
 
                 <Grid x:Name="OuterContentGrid" ClipToBounds="True">
@@ -212,12 +213,20 @@
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </Grid>
 
-                        <!-- Idle compact: clock -->
+                        <!-- Idle compact: AI 비서 (기본 아일랜드) + 시계 -->
                         <Grid x:Name="IdleCompactView" Opacity="0" IsHitTestVisible="False"
-                              VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock x:Name="IdleTimeText" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold"
-                                       LineHeight="19" LineStackingStrategy="BlockLineHeight"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                              Margin="14,0,14,0" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <Path Data="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"
+                                      Fill="#0A84FF" Width="13" Height="13" Stretch="Uniform"
+                                      VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Text="AI 비서" Foreground="#FFFFFF" FontSize="13.5" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Margin="0,-1,0,0"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                <TextBlock x:Name="IdleTimeText" Foreground="#98989D" FontSize="13" FontWeight="Medium"
+                                           VerticalAlignment="Center" Margin="10,0,0,0"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                            </StackPanel>
                         </Grid>
 
                         <!-- Notification Compact -->
@@ -235,6 +244,44 @@
                                        Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                        VerticalAlignment="Center" Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+
+                        <!-- AI 비서 (확장 대화 뷰) -->
+                        <Grid x:Name="AssistantView" Opacity="0" IsHitTestVisible="False"
+                              Margin="18,16,18,14" VerticalAlignment="Top">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock x:Name="AssistantStatusText" Grid.Row="0" Text="무엇이든 물어보세요"
+                                       Foreground="#8E8E93" FontSize="11" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
+                                       HorizontalAlignment="Left" Margin="2,0,0,8"/>
+
+                            <ScrollViewer x:Name="AssistantScroll" Grid.Row="1"
+                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          MaxHeight="196" Margin="0,0,2,0">
+                                <StackPanel x:Name="AssistantConversationPanel"/>
+                            </ScrollViewer>
+
+                            <Border x:Name="AssistantInputBorder" Grid.Row="2"
+                                    Background="#1C1C1E" CornerRadius="9" Padding="10,6"
+                                    Margin="0,10,0,0" BorderBrush="#30FFFFFF" BorderThickness="1">
+                                <Grid>
+                                    <TextBox x:Name="AssistantInputBox"
+                                             Background="Transparent" BorderThickness="0" Foreground="#FFFFFF"
+                                             CaretBrush="#0A84FF" FontSize="13" FontWeight="Medium"
+                                             FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
+                                             VerticalContentAlignment="Center"
+                                             KeyDown="AssistantInput_KeyDown"/>
+                                    <TextBlock x:Name="AssistantInputPlaceholder" Text="질문 입력… (Enter 전송, Esc 닫기)"
+                                               Foreground="#5A5A5E" FontSize="13" FontWeight="Medium"
+                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
+                                               VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                </Grid>
+                            </Border>
                         </Grid>
 
                         <!-- Notification Expanded -->
@@ -256,16 +303,28 @@
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </Grid>
 
-                        <!-- Idle expanded: big clock -->
+                        <!-- Idle expanded: AI 비서 티저 -->
                         <StackPanel x:Name="IdleExpandedView" Opacity="0" IsHitTestVisible="False"
                                     VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <TextBlock x:Name="IdleExpandedTimeText" Foreground="#FFFFFF" FontSize="44" FontWeight="Bold"
-                                       HorizontalAlignment="Center"
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,8">
+                                <Path Data="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z"
+                                      Fill="#0A84FF" Width="20" Height="20" Stretch="Uniform"
+                                      VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock Text="TopDock AI 비서" Foreground="#FFFFFF" FontSize="19" FontWeight="Bold"
+                                           VerticalAlignment="Center"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                            </StackPanel>
+                            <TextBlock Text="클릭하거나 Ctrl+Shift+Space를 눌러 대화 시작"
+                                       Foreground="#8E8E93" FontSize="12.5" FontWeight="Medium"
+                                       HorizontalAlignment="Center" Margin="0,0,0,10"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
-                            <TextBlock x:Name="IdleExpandedDateText" Foreground="#A0A0A5" FontSize="14" FontWeight="Medium"
-                                       HorizontalAlignment="Center" Margin="0,2,0,0"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
-
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock x:Name="IdleExpandedTimeText" Foreground="#FFFFFF" FontSize="15" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                <TextBlock x:Name="IdleExpandedDateText" Foreground="#8E8E93" FontSize="13" FontWeight="Medium"
+                                           Margin="10,0,0,0" VerticalAlignment="Center"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <!-- Media compact -->

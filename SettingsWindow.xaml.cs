@@ -40,6 +40,59 @@ namespace TopDock
             SponsorCategoryPanel.IsEnabled = cfg.SponsorSkipEnabled;
 
             ApiKeyBox.Password = cfg.YouTubeApiKey;
+
+            AssistantEnabledCheck.IsChecked = cfg.AssistantEnabled;
+            AiProviderCombo.SelectedIndex = cfg.AiProvider switch
+            {
+                "gemini" => 1,
+                "openrouter" => 2,
+                "upstage" => 3,
+                "ollama" => 4,
+                _ => 0 // llm7
+            };
+            AiApiKeyBox.Password = cfg.AiApiKey;
+            AiModelBox.Text = cfg.AiModel;
+            UpdateAiProviderUi();
+        }
+
+        private static string ProviderFromIndex(int index) => index switch
+        {
+            1 => "gemini",
+            2 => "openrouter",
+            3 => "upstage",
+            4 => "ollama",
+            _ => "llm7"
+        };
+
+        private void UpdateAiProviderUi()
+        {
+            string provider = ProviderFromIndex(AiProviderCombo.SelectedIndex);
+            bool needsKey = provider is "gemini" or "openrouter" or "upstage";
+
+            AiProviderHintText.Text = provider switch
+            {
+                "llm7" => "API 키 없이 바로 사용됩니다 (무료, 분당 30회).",
+                "gemini" => "aistudio.google.com에서 무료 키 발급 가능 (하루 1,500회).",
+                "openrouter" => "openrouter.ai에서 무료 키 발급 가능 (무료 모델 하루 50회).",
+                "upstage" => "console.upstage.ai에서 유료 키를 입력하세요.",
+                "ollama" => "ollama 실행 중이어야 합니다. 예: ollama pull qwen3:4b",
+                _ => string.Empty
+            };
+            AiApiKeyLabel.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
+            AiApiKeyBox.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void AiProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (AiProviderHintText != null)
+            {
+                UpdateAiProviderUi();
+            }
+        }
+
+        private void AssistantEnabled_Changed(object sender, RoutedEventArgs e)
+        {
+            // UI만 토글; 실제 저장은 Save_Click에서
         }
 
         private void TopMarginSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -80,6 +133,11 @@ namespace TopDock
             cfg.SponsorSkipMusicOfftopic = SponsorSkipMusicOfftopicCheck.IsChecked == true;
 
             cfg.YouTubeApiKey = ApiKeyBox.Password.Trim();
+
+            cfg.AssistantEnabled = AssistantEnabledCheck.IsChecked == true;
+            cfg.AiProvider = ProviderFromIndex(AiProviderCombo.SelectedIndex);
+            cfg.AiApiKey = AiApiKeyBox.Password.Trim();
+            cfg.AiModel = AiModelBox.Text.Trim();
 
             ConfigService.Save();
             SettingsSaved?.Invoke(this, System.EventArgs.Empty);

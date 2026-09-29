@@ -44,6 +44,25 @@
             <CheckBox x:Name="SponsorSkipMusicOfftopicCheck" Content="음악과 무관한 구간 (music_offtopic)" FontSize="13" Margin="0,2,0,8"/>
         </StackPanel>
 
+        <TextBlock Text="AI 비서" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
+        <CheckBox x:Name="AssistantEnabledCheck" Content="AI 비서 사용 (핫키: Ctrl+Shift+Space)"
+                  FontSize="13" Margin="0,2,0,6" Checked="AssistantEnabled_Changed" Unchecked="AssistantEnabled_Changed"/>
+        <TextBlock Text="프로바이더" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
+        <ComboBox x:Name="AiProviderCombo" FontSize="13" Width="280" HorizontalAlignment="Left"
+                  Margin="0,0,0,4" SelectionChanged="AiProvider_SelectionChanged">
+            <ComboBoxItem Content="LLM7 — 무료·키 불필요 (기본)"/>
+            <ComboBoxItem Content="Google Gemini — 무료 티어 (키 필요)"/>
+            <ComboBoxItem Content="OpenRouter — 무료 모델 (키 필요)"/>
+            <ComboBoxItem Content="Upstage Solar — 유료 (키 필요)"/>
+            <ComboBoxItem Content="Ollama — 내 PC 로컬 실행"/>
+        </ComboBox>
+        <TextBlock x:Name="AiProviderHintText" Text="키 입력 없이 바로 사용할 수 있습니다 (분당 30회)."
+                   FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,4"/>
+        <TextBlock x:Name="AiApiKeyLabel" Text="API 키" FontSize="12" Foreground="#555558" Margin="0,2,0,4"/>
+        <PasswordBox x:Name="AiApiKeyBox" FontSize="13" Margin="0,0,0,8"/>
+        <TextBlock Text="모델 (비우면 기본값 사용)" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
+        <TextBox x:Name="AiModelBox" FontSize="13" Margin="0,0,0,12"/>
+
         <TextBlock Text="YouTube API (선택)" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
         <TextBlock Text="API 키를 입력하면 스폰서 구간 조회가 더 정확해집니다. 없으면 HTML 검색으로 대체합니다."
                    FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,6"/>
