@@ -405,10 +405,57 @@ namespace TopDock
 
         private void ClockTimer_Tick(object? sender, EventArgs e)
         {
-            DateTime now = DateTime.Now;
-            IdleTimeText.Text = now.ToString("HH:mm");
-            IdleExpandedTimeText.Text = now.ToString("HH:mm");
-            IdleExpandedDateText.Text = now.ToString("M월 d일 dddd");
+            // 시계 UI는 없앴지만 시각은 AI 비서 컨텍스트용으로 계속 갱신
+            _currentClockText = DateTime.Now.ToString("yyyy-MM-dd dddd HH:mm");
+        }
+
+        private string _currentClockText = string.Empty;
+
+        // ── AI 얼굴 표정 관리 ──
+
+        private Controls.AiFace? ActiveFace =>
+            _currentViewMode == ViewMode.IdleExpanded ? ExpandedFace :
+            _currentViewMode == ViewMode.IdleCompact ? CompactFace : null;
+
+        /// <summary>Idle 상태에서 상황에 맞는 능동적 메시지와 표정을 고른다.</summary>
+        private void RefreshIdleFace()
+        {
+            var face = ActiveFace;
+            if (face == null) return;
+            face.SetState(Controls.AiFace.FaceState.Idle);
+
+            string status;
+            var media = _mediaService.CurrentMedia;
+            if (media != null && media.IsPlaying && !string.IsNullOrWhiteSpace(media.Title) && media.Title != "재생 중인 미디어 없음")
+            {
+                status = $"{TruncateStatus(media.Title)} 듣는 중";
+            }
+            else if (_lastBatteryPercent >= 0 && _lastBatteryPercent <= 0.20f && !_lastBatteryCharging)
+            {
+                status = "배터리가 좀 부족해";
+            }
+            else
+            {
+                status = DateTime.Now.Hour switch
+                {
+                    >= 23 or < 6 => "아직 안 잤어?",
+                    < 9 => "좋은 아침",
+                    < 12 => "오늘 일정 뭐 있어?",
+                    < 14 => "점심은 먹었어?",
+                    < 18 => "오후니까 커피 한 잔",
+                    < 22 => "저녁이네, 잘 지내?",
+                    _ => "안녕, 나 여기 있어"
+                };
+            }
+
+            IdleStatusText.Text = "AI 비서";
+            ExpandedFaceStatusText.Text = status;
+        }
+
+        private static string TruncateStatus(string s)
+        {
+            s = s.Trim();
+            return s.Length <= 12 ? s : s[..12] + "…";
         }
 
         private void Notch_MouseEnter(object sender, MouseEventArgs e)
@@ -422,6 +469,7 @@ namespace TopDock
                 return;
             }
             SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
+            RefreshIdleFace();
         }
 
         private void Notch_MouseLeave(object sender, MouseEventArgs e)
@@ -447,6 +495,7 @@ namespace TopDock
                 return;
             }
             SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+            CompactFace?.SetState(Controls.AiFace.FaceState.Idle);
         }
 
         private void Notch_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -552,7 +601,9 @@ namespace TopDock
             NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathAnim);
         }
 
-        /// <summary>AI 전용 글로우 — 바이올렛+시안 시그니처 색, 더 밝고 빠른 펄스.</summary>
+        /// <summary>AI 전용 글로우 — 바이올렛+시안 스월: 오라가 공전하고 림에 광택이 흐른다.</summary>
+        private Storyboard? _assistantGlowStoryboard;
+
         private void SetAssistantGlow()
         {
             Color violet = Color.FromRgb(0x8B, 0x5C, 0xF6);
@@ -565,10 +616,10 @@ namespace TopDock
                 stop.BeginAnimation(GradientStop.ColorProperty, anim);
             }
 
-            Color aura1 = Color.FromArgb(190, violet.R, violet.G, violet.B);
-            Color aura2 = Color.FromArgb(80, cyan.R, cyan.G, cyan.B);
-            Color rim1 = Color.FromArgb(230, violet.R, violet.G, violet.B);
-            Color rim2 = Color.FromArgb(200, cyan.R, cyan.G, cyan.B);
+            Color aura1 = Color.FromArgb(200, violet.R, violet.G, violet.B);
+            Color aura2 = Color.FromArgb(90, cyan.R, cyan.G, cyan.B);
+            Color rim1 = Color.FromArgb(235, violet.R, violet.G, violet.B);
+            Color rim2 = Color.FromArgb(210, cyan.R, cyan.G, cyan.B);
 
             if (_ambientActive)
             {
@@ -585,7 +636,6 @@ namespace TopDock
                 RimColorStop2.Color = rim2;
             }
 
-            // 이퀄라이저 바도 AI 색으로 동기화 (미디어 없이 비서만 켜진 경우 대비)
             var eqFade = new ColorAnimation { To = violet, Duration = AmbientColorFade, EasingFunction = ease };
             foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
             {
@@ -598,19 +648,79 @@ namespace TopDock
             if (!_ambientActive)
             {
                 _ambientActive = true;
-                NotchAmbientContainer.Opacity = 0.75;
+                NotchAmbientContainer.Opacity = 0.85;
             }
 
-            // 미디어 브레스(2.4s)와 구별되는 더 밝고 빠른 펄스
             StopAmbientBreathAnimation();
-            var pulse = new DoubleAnimation(0.75, 1.0, TimeSpan.FromSeconds(1.6))
+            StartAssistantSwirl();
+        }
+
+        /// <summary>오라 중심이 노치 주위를 공전하고 림 광택이 흐르는 스월. (검증된 PropertyPath만 사용)</summary>
+        private void StartAssistantSwirl()
+        {
+            StopAssistantSwirl();
+
+            _assistantGlowStoryboard = new Storyboard();
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+
+            // 1) 오라 중심이 대각선으로 왕복 — 빛이 도는 느낌 (3.2초 왕복)
+            var centerAnim = new PointAnimation
+            {
+                From = new Point(0.28, 0.32),
+                To = new Point(0.72, 0.68),
+                Duration = TimeSpan.FromSeconds(3.2),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease
+            };
+            Storyboard.SetTarget(centerAnim, NotchAmbientAura);
+            Storyboard.SetTargetProperty(centerAnim, new PropertyPath("(Border.Background).(RadialGradientBrush.Center)"));
+            _assistantGlowStoryboard.Children.Add(centerAnim);
+
+            // 2) 오라 원점도 반대 위상으로 — 중심과 원점이 어긋나며 스월 형태 생성
+            var originAnim = new PointAnimation
+            {
+                From = new Point(0.70, 0.70),
+                To = new Point(0.30, 0.30),
+                Duration = TimeSpan.FromSeconds(3.2),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease
+            };
+            Storyboard.SetTarget(originAnim, NotchAmbientAura);
+            Storyboard.SetTargetProperty(originAnim, new PropertyPath("(Border.Background).(RadialGradientBrush.GradientOrigin)"));
+            _assistantGlowStoryboard.Children.Add(originAnim);
+
+            // 3) 림 광택: 바이올렛→시안 스톱 오프셋이 흐르며 테두리를 따라 빛이 이동
+            var rimShimmer = new DoubleAnimation(0.0, 1.0, TimeSpan.FromSeconds(2.2))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                EasingFunction = ease
             };
-            Timeline.SetDesiredFrameRate(pulse, 30);
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, pulse);
+            Storyboard.SetTarget(rimShimmer, NotchAmbientRim);
+            Storyboard.SetTargetProperty(rimShimmer, new PropertyPath("(Border.BorderBrush).(LinearGradientBrush.GradientStops)[0].(GradientStop.Offset)"));
+            _assistantGlowStoryboard.Children.Add(rimShimmer);
+
+            _assistantGlowStoryboard.Begin();
+
+            // 4) 컨테이너 미세 브레스 (기존 패턴 재사용 — BeginAnimation)
+            var breathe = new DoubleAnimation(0.82, 1.0, TimeSpan.FromSeconds(2.0))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease
+            };
+            Timeline.SetDesiredFrameRate(breathe, 30);
+            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathe);
+        }
+
+        private void StopAssistantSwirl()
+        {
+            _assistantGlowStoryboard?.Stop();
+            _assistantGlowStoryboard = null;
+            // 브레스도 함께 정지
+            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, null);
         }
 
         /// <summary>비서 화면을 나간 뒤 이전 글로우(앨범 색 또는 없음)로 복원.</summary>
@@ -618,6 +728,7 @@ namespace TopDock
         {
             if (_mediaService.CurrentMedia?.Thumbnail is BitmapSource bmp && bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48)
             {
+                _ambientActive = false; // SetAmbientColor가 브레스 애니메이션을 다시 시작하게
                 SetAmbientColor(GetDominantColor(bmp));
             }
             else
@@ -799,7 +910,7 @@ namespace TopDock
             Duration duration = new Duration(TimeSpan.FromMilliseconds(450));
             ExponentialEase ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
 
-            double targetWidth = 100;
+            double targetWidth = 132;
             double targetHeight = 38;
             double targetRadius = 19;
             UIElement activeView = IdleCompactView;
@@ -807,7 +918,8 @@ namespace TopDock
             switch (mode)
             {
                 case ViewMode.IdleCompact:
-                    targetWidth = 100;
+                    // 얼굴(34px) + "AI 비서" 텍스트가 잘리지 않도록 여유 폭 유지
+                    targetWidth = 132;
                     targetHeight = 38;
                     targetRadius = 19;
                     activeView = IdleCompactView;
@@ -924,6 +1036,13 @@ namespace TopDock
 
         private void ShowVolumeHud(int volumeVal, bool isMuted)
         {
+            // AI 비서 대화 중에는 볼륨 UI가 대화창에 끼어들지 않게 차단
+            if (_currentViewMode == ViewMode.Assistant)
+            {
+                StartHudTimer();
+                return;
+            }
+
             _isVolumeAdjusting = true;
             string volStr = isMuted ? "Mute" : $"{volumeVal}%";
 
@@ -1986,6 +2105,14 @@ namespace TopDock
             AssistantStatusText.Text = "무엇이든 물어보세요";
             SwitchViewMode(ViewMode.Assistant);
             SetAssistantGlow();
+            ConversationFace.SetState(Controls.AiFace.FaceState.Alert);
+
+            // 첫 열림: 상황을 보고 먼저 말을 건다 (능동성)
+            if (_assistant.GetHistorySnapshot().Count == 0)
+            {
+                string greeting = BuildProactiveGreeting();
+                AppendAssistantBubble(greeting, isUser: false);
+            }
 
             // 스위치 애니메이션 이후 포커스 (노치가 Topmost 투명 오버레이라 스스로 활성화 필요)
             ActivateSelfAndFocusInput();
@@ -1997,6 +2124,7 @@ namespace TopDock
             SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
 
             // _currentViewMode가 이미 바뀐 뒤 복원해야 미디어 글로우가 살아난다
+            StopAssistantSwirl();
             RestoreGlowAfterAssistant();
         }
 
@@ -2039,6 +2167,8 @@ namespace TopDock
             AssistantInputBox.Clear();
             AssistantInputPlaceholder.Visibility = Visibility.Collapsed;
             AssistantStatusText.Text = "생각 중…";
+            ConversationFace.SetState(Controls.AiFace.FaceState.Thinking);
+            ConversationFace.StartThinkingWobble();
 
             // 질문 bubble
             AppendAssistantBubble(userMessage, isUser: true);
@@ -2049,9 +2179,38 @@ namespace TopDock
             UpdateAssistantContext();
             Log.Info($"Assistant query: {userMessage}");
 
+            bool firstDeltaSeen = false;
+            void OnFirstDelta()
+            {
+                if (firstDeltaSeen) return;
+                firstDeltaSeen = true;
+                ConversationFace.StopThinkingWobble();
+                ConversationFace.SetState(Controls.AiFace.FaceState.Talking);
+            }
+
             try
             {
-                string answer = await _assistant.SendAsync(userMessage, _assistantCts.Token).ConfigureAwait(true);
+                // 스트리밍 시작을 감지해 표정을 '말하는 중'으로 전환
+                void DeltaProxy(string d)
+                {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        OnFirstDelta();
+                        AssistantStatusText.Text = "답변 중… (Esc로 닫기)";
+                    }));
+                    Assistant_DeltaReceived(d);
+                }
+
+                string answer;
+                _assistant.DeltaReceived += DeltaProxy;
+                try
+                {
+                    answer = await _assistant.SendAsync(userMessage, _assistantCts.Token).ConfigureAwait(true);
+                }
+                finally
+                {
+                    _assistant.DeltaReceived -= DeltaProxy;
+                }
                 Log.Info($"Assistant answer length: {answer.Length}");
                 if (_assistantAnswerBlock != null && string.IsNullOrEmpty(_assistantAnswerBlock.Text))
                 {
@@ -2068,16 +2227,20 @@ namespace TopDock
                 Log.Error("Assistant request failed", ex);
                 if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ " + ex.Message;
                 AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
+                ConversationFace.SetState(Controls.AiFace.FaceState.Sad);
             }
             catch (Exception ex)
             {
                 Log.Error("Assistant unexpected error", ex);
                 if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
                 AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
+                ConversationFace.SetState(Controls.AiFace.FaceState.Sad);
             }
             finally
             {
                 _assistantBusy = false;
+                ConversationFace.StopThinkingWobble();
+                ConversationFace.SetState(Controls.AiFace.FaceState.Alert);
             }
         }
 
@@ -2171,6 +2334,38 @@ namespace TopDock
             {
                 OpenAssistant();
             }
+        }
+
+        /// <summary>비서가 먼저 상황을 인지하고 인사한다.</summary>
+        private string BuildProactiveGreeting()
+        {
+            var media = _mediaService.CurrentMedia;
+            string timePart = DateTime.Now.Hour switch
+            {
+                >= 23 or < 6 => "이 늦은 시간에",
+                < 9 => "좋은 아침!",
+                < 12 => "안녕!",
+                < 14 => "점심 먹었어?",
+                < 18 => "오후 잘 보내고 있어?",
+                < 22 => "저녁이야",
+                _ => "안녕!"
+            };
+
+            string? context = null;
+            if (media != null && media.IsPlaying && !string.IsNullOrWhiteSpace(media.Title) && media.Title != "재생 중인 미디어 없음")
+            {
+                context = $"\"{TruncateStatus(media.Title)}\" 듣고 있구나. 뭐 궁금한 거 있어?";
+            }
+            else if (_lastBatteryPercent >= 0 && _lastBatteryPercent <= 0.20f && !_lastBatteryCharging)
+            {
+                context = "배터리가 20% 밑이야. 충전기 연결했어?";
+            }
+            else if (_clipboardHistory.Count > 0 && !_clipboardHistory[0].IsImage && _clipboardHistory[0].Text.Length > 40)
+            {
+                context = "아까 복사한 긴 텍스트, 요약해줄까?";
+            }
+
+            return context == null ? $"{timePart} 나 여기 있어. 뭐 도와줄까?" : $"{timePart} {context}";
         }
 
         private void ClearAssistantConversation()

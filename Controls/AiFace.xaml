@@ -1,0 +1,44 @@
+<UserControl x:Class="TopDock.Controls.AiFace"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 어떤 크기로 놓아도 비율이 유지되도록 Viewbox 래핑 -->
+    <Viewbox Stretch="Uniform">
+        <Grid Width="40" Height="26" Background="Transparent">
+            <!-- 얼굴 뒤 은은한 오로라 -->
+            <Ellipse x:Name="Halo" Width="38" Height="24" VerticalAlignment="Center" Opacity="0.5">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#738B5CF6" Offset="0"/>
+                        <GradientStop Color="#4022D3EE" Offset="0.65"/>
+                        <GradientStop Color="#0022D3EE" Offset="1"/>
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+
+            <!-- 두 눈: 깜빡임(ScaleY) + 시선(Translate) -->
+            <Canvas x:Name="EyesCanvas" Width="40" Height="26" VerticalAlignment="Center">
+                <Canvas.RenderTransform>
+                    <TranslateTransform x:Name="EyesBounce"/>
+                </Canvas.RenderTransform>
+                <Border x:Name="LeftEye" Canvas.Left="9" Canvas.Top="5" Width="9" Height="16"
+                        CornerRadius="4.5" Background="#F2F4FF" RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="LeftBlink" ScaleX="1" ScaleY="1"/>
+                            <TranslateTransform x:Name="LeftGaze"/>
+                        </TransformGroup>
+                    </Border.RenderTransform>
+                </Border>
+                <Border x:Name="RightEye" Canvas.Left="22" Canvas.Top="5" Width="9" Height="16"
+                        CornerRadius="4.5" Background="#F2F4FF" RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="RightBlink" ScaleX="1" ScaleY="1"/>
+                            <TranslateTransform x:Name="RightGaze"/>
+                        </TransformGroup>
+                    </Border.RenderTransform>
+                </Border>
+            </Canvas>
+        </Grid>
+    </Viewbox>
+</UserControl>
