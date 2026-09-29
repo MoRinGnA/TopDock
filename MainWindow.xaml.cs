@@ -448,7 +448,6 @@ namespace TopDock
                 };
             }
 
-            IdleStatusText.Text = "AI 비서";
             ExpandedFaceStatusText.Text = status;
         }
 
@@ -910,7 +909,7 @@ namespace TopDock
             Duration duration = new Duration(TimeSpan.FromMilliseconds(450));
             ExponentialEase ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
 
-            double targetWidth = 132;
+            double targetWidth = 100;
             double targetHeight = 38;
             double targetRadius = 19;
             UIElement activeView = IdleCompactView;
@@ -918,8 +917,8 @@ namespace TopDock
             switch (mode)
             {
                 case ViewMode.IdleCompact:
-                    // 얼굴(34px) + "AI 비서" 텍스트가 잘리지 않도록 여유 폭 유지
-                    targetWidth = 132;
+                    // 얼굴만 있으니 노치 기본 실루엣(100×38) 그대로 유지
+                    targetWidth = 100;
                     targetHeight = 38;
                     targetRadius = 19;
                     activeView = IdleCompactView;

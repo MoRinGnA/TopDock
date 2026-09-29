@@ -239,17 +239,11 @@
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </Grid>
 
-                        <!-- Idle compact: AI 비서 얼굴이 주인공 -->
+                        <!-- Idle compact: 얼굴만. 라벨 없이 캐릭터 자체가 아일랜드 -->
                         <Grid x:Name="IdleCompactView" Opacity="0" IsHitTestVisible="False"
                               VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <controls:AiFace x:Name="CompactFace" Width="34" Height="24"
-                                                 VerticalAlignment="Center" Margin="6,0,7,0"/>
-                                <TextBlock x:Name="IdleStatusText" Text="AI 비서"
-                                           Foreground="#FFFFFF" FontSize="13.5" FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
-                            </StackPanel>
+                            <controls:AiFace x:Name="CompactFace" Width="36" Height="25"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Grid>
 
                         <!-- Notification Compact -->
