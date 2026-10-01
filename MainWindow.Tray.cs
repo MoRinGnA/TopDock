@@ -45,11 +45,6 @@ namespace TopDock
             _settingsWindow.Show();
         }
 
-        private void AssistantSettingsButton_Click(object sender, RoutedEventArgs e)
-        {
-            OpenSettings();
-        }
-
         private void AssistantAiButton_Click(object sender, RoutedEventArgs e)
         {
             // 새 지시: 기록을 비우고 오브를 대기 상태로 — 텍스트 없이 초기화
