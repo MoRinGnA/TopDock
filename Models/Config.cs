@@ -22,6 +22,10 @@ namespace TopDock.Models
         [JsonPropertyName("sponsorSkipEnabled")]
         public bool SponsorSkipEnabled { get; set; } = true;
 
+        // auto: 구간 진입 시 자동 seek / manual: 자동 스킵 없이 진행바 마커+건너뛰기 버튼만
+        [JsonPropertyName("sponsorSkipMode")]
+        public string SponsorSkipMode { get; set; } = "auto";
+
         [JsonPropertyName("sponsorSkipIntro")]
         public bool SponsorSkipIntro { get; set; } = true;
 

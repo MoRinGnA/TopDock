@@ -14,4 +14,18 @@
     <Using Remove="System.Drawing" />
 </ItemGroup>
 
+<ItemGroup>
+  <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
+</ItemGroup>
+
+<ItemGroup>
+  <Content Include="battery\**\*" Exclude="battery\dist\**" CopyToOutputDirectory="PreserveNewest" />
+  <None Include="battery\.gitignore" CopyToOutputDirectory="Never" />
+  <None Include="battery\ssr-manifest.json" CopyToOutputDirectory="Never" />
+</ItemGroup>
+
+<Target Name="EnsureBatteryBuild" AfterTargets="Build" Condition=" '$(Configuration)' == 'Release' ">
+  <Exec Command="npm --prefix $(ProjectDir) run build:battery" />
+</Target>
+
 </Project>

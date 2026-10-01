@@ -1,0 +1,6 @@
+<UserControl x:Class="TopDock.Controls.ThinkingOrb"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 점 렌더링은 코드비하인드에서 OnRender로 수행한다 -->
+    <Grid/>
+</UserControl>

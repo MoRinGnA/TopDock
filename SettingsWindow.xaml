@@ -2,76 +2,226 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="TopDock 설정"
-        Width="420"
+        Width="440"
         SizeToContent="Height"
-        WindowStyle="SingleBorderWindow"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
-        Background="#FAFAFA"
         ShowInTaskbar="False">
-    <StackPanel Margin="20,16,20,16">
+    <Window.Resources>
+        <!-- 닫기 버튼 -->
+        <Style x:Key="DarkCloseButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="btnBorder" Background="Transparent" CornerRadius="13">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="btnBorder" Property="Background" Value="#30FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
-        <TextBlock Text="일반" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,0,0,8"/>
-        <CheckBox x:Name="ShowNotificationsCheck" Content="알림 표시"
-                  FontSize="13" Margin="0,2,0,6"/>
-        <CheckBox x:Name="ShowClipboardToastCheck" Content="클립보드 복사 토스트"
-                  FontSize="13" Margin="0,2,0,10"/>
+        <!-- 암시적 스타일: 다크 아일랜드 위에서 읽히도록 -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#C7C7CC"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E5FFFFFF"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
 
-        <TextBlock Text="노치" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
-        <TextBlock Text="앰비언트 글로우 강도" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
-        <ComboBox x:Name="GlowIntensityCombo" FontSize="13" Width="180" HorizontalAlignment="Left"
-                  Margin="0,0,0,8" SelectedIndex="1">
-            <ComboBoxItem Content="절제 (Subtle)"/>
-            <ComboBoxItem Content="표준 (Standard)"/>
-            <ComboBoxItem Content="화려 (Vivid)"/>
-        </ComboBox>
-        <TextBlock Text="상단 여백 (px)" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-        <Slider x:Name="TopMarginSlider" Width="220" Minimum="0" Maximum="40"
-                IsSnapToTickEnabled="True" TickFrequency="1" VerticalAlignment="Center"
-                ValueChanged="TopMarginSlider_ValueChanged"/>
-            <TextBlock x:Name="TopMarginValueText" Text="8" FontSize="13" FontWeight="SemiBold"
-                       Margin="10,0,0,0" VerticalAlignment="Center" Width="30"/>
+        <!-- 다크 콤보박스 -->
+        <Style x:Key="DarkCombo" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#E5FFFFFF"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Bg" Background="#1C1C1E" BorderBrush="#33FFFFFF"
+                                                BorderThickness="1" CornerRadius="8">
+                                            <Path Data="M0 0L4 4 8 0" Stroke="#98989D" StrokeThickness="1.5"
+                                                  HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bg" Property="BorderBrush" Value="#55FFFFFF"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="10,6,26,6" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                              IsHitTestVisible="False" TextBlock.Foreground="#E5FFFFFF"/>
+                            <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                <Border Background="#1C1C1E" BorderBrush="#33FFFFFF" BorderThickness="1"
+                                        CornerRadius="8" MinWidth="{TemplateBinding ActualWidth}" Margin="0,4,0,0" Padding="0,4">
+                                    <ItemsPresenter/>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="#E5FFFFFF"/>
+                        <Setter Property="FontSize" Value="13"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ComboBoxItem">
+                                    <Border x:Name="ItemBg" Background="Transparent" Padding="10,6" CornerRadius="5" Margin="4,1">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ItemBg" Property="Background" Value="#25FFFFFF"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="ItemBg" Property="Background" Value="#0A84FF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 다크 입력 상자: TextBox와 PasswordBox는 공용 상속 불가(WPF 제약)라 따로 정의 -->
+        <Style x:Key="DarkTextBox" TargetType="TextBox">
+            <Setter Property="Foreground" Value="#E5FFFFFF"/>
+            <Setter Property="CaretBrush" Value="#0A84FF"/>
+            <Setter Property="Background" Value="#1C1C1E"/>
+            <Setter Property="BorderBrush" Value="#33FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+        <Style x:Key="DarkPasswordBox" TargetType="PasswordBox">
+            <Setter Property="Foreground" Value="#E5FFFFFF"/>
+            <Setter Property="CaretBrush" Value="#0A84FF"/>
+            <Setter Property="Background" Value="#1C1C1E"/>
+            <Setter Property="BorderBrush" Value="#33FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="RootBorder" Background="#F20C0C0E" BorderThickness="1" BorderBrush="#22FFFFFF"
+            CornerRadius="16" Margin="26" Padding="24,18,24,20">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="30" ShadowDepth="0" Opacity="0.55"/>
+        </Border.Effect>
+        <StackPanel>
+
+            <!-- 헤더: 드래그 이동 + 닫기 -->
+            <Grid MouseLeftButtonDown="Header_MouseLeftButtonDown" Background="Transparent">
+                <TextBlock Text="설정" FontSize="17" FontWeight="Bold" Foreground="#FFFFFF"/>
+                <Button x:Name="CloseButton" Style="{StaticResource DarkCloseButton}"
+                        Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="CloseButton_Click">
+                    <Path Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+                          Fill="#C8C8CC" Width="11" Height="11" Stretch="Uniform"/>
+                </Button>
+            </Grid>
+
+            <!-- 일반 -->
+            <TextBlock Text="일반" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,14,0,6"/>
+            <CheckBox x:Name="ShowNotificationsCheck" Content="알림 표시" Margin="0,2,0,4"/>
+            <CheckBox x:Name="ShowClipboardToastCheck" Content="클립보드 복사 토스트" Margin="0,2,0,6"/>
+
+            <!-- 노치 -->
+            <TextBlock Text="노치" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
+            <TextBlock Text="앰비언트 글로우 강도" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+            <ComboBox x:Name="GlowIntensityCombo" Style="{StaticResource DarkCombo}" Width="220"
+                      HorizontalAlignment="Left" Margin="0,0,0,8" SelectedIndex="1">
+                <ComboBoxItem Content="절제 (Subtle)"/>
+                <ComboBoxItem Content="표준 (Standard)"/>
+                <ComboBoxItem Content="화려 (Vivid)"/>
+            </ComboBox>
+            <TextBlock Text="상단 여백 (px)" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <Slider x:Name="TopMarginSlider" Width="220" Minimum="0" Maximum="40"
+                        IsSnapToTickEnabled="True" TickFrequency="1" VerticalAlignment="Center"
+                        ValueChanged="TopMarginSlider_ValueChanged"/>
+                <TextBlock x:Name="TopMarginValueText" Text="8" FontSize="13" FontWeight="SemiBold"
+                           Foreground="#FFFFFF" Margin="10,0,0,0" VerticalAlignment="Center" Width="30"/>
+            </StackPanel>
+
+            <!-- 스폰서 스킵 -->
+            <TextBlock Text="스폰서 스킵" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
+            <CheckBox x:Name="SponsorSkipEnabledCheck" Content="스폰서 구간 스킵 기능 사용"
+                      Margin="0,2,0,4" Checked="SponsorSkipEnabled_Changed" Unchecked="SponsorSkipEnabled_Changed"/>
+            <StackPanel x:Name="SponsorCategoryPanel" Margin="16,0,0,0">
+                <TextBlock Text="스킵 방식" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+                <ComboBox x:Name="SponsorSkipModeCombo" Style="{StaticResource DarkCombo}" Width="280"
+                          HorizontalAlignment="Left" Margin="0,0,0,6" SelectedIndex="0">
+                    <ComboBoxItem Content="자동 — 구간 진입 시 즉시 건너뛰기"/>
+                    <ComboBoxItem Content="수동 — 마커만 표시, 건너뛰기 버튼 제공"/>
+                </ComboBox>
+                <TextBlock Text="표시할 구간 카테고리" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+                <CheckBox x:Name="SponsorSkipIntroCheck" Content="인트로 (intro)" Margin="0,2,0,4"/>
+                <CheckBox x:Name="SponsorSkipOutroCheck" Content="아웃트로 (outro)" Margin="0,2,0,4"/>
+                <CheckBox x:Name="SponsorSkipIntermissionCheck" Content="인터미션/자기소개 (intermission)" Margin="0,2,0,4"/>
+                <CheckBox x:Name="SponsorSkipMusicOfftopicCheck" Content="음악과 무관한 구간 (music_offtopic)" Margin="0,2,0,6"/>
+            </StackPanel>
+
+            <!-- AI 비서 -->
+            <TextBlock Text="AI 비서" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
+            <CheckBox x:Name="AssistantEnabledCheck" Content="AI 비서 사용 (핫키: Ctrl+Shift+Space)"
+                      Margin="0,2,0,6" Checked="AssistantEnabled_Changed" Unchecked="AssistantEnabled_Changed"/>
+            <TextBlock Text="프로바이더" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+            <ComboBox x:Name="AiProviderCombo" Style="{StaticResource DarkCombo}" Width="300"
+                      HorizontalAlignment="Left" Margin="0,0,0,4" SelectionChanged="AiProvider_SelectionChanged">
+                <ComboBoxItem Content="LLM7 — 무료·키 불필요 (기본)"/>
+                <ComboBoxItem Content="Google Gemini — 무료 티어 (키 필요)"/>
+                <ComboBoxItem Content="OpenRouter — 무료 모델 (키 필요)"/>
+                <ComboBoxItem Content="Upstage Solar — 유료 (키 필요)"/>
+                <ComboBoxItem Content="Ollama — 내 PC 로컬 실행"/>
+            </ComboBox>
+            <TextBlock x:Name="AiProviderHintText" Text="키 입력 없이 바로 사용할 수 있습니다 (분당 30회)."
+                       FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,4"/>
+            <TextBlock x:Name="AiApiKeyLabel" Text="API 키" FontSize="12" Foreground="#8E8E93" Margin="0,2,0,4"/>
+            <PasswordBox x:Name="AiApiKeyBox" Style="{StaticResource DarkPasswordBox}" Margin="0,0,0,8"/>
+            <TextBlock Text="모델 (비우면 기본값 사용)" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+            <TextBox x:Name="AiModelBox" Style="{StaticResource DarkTextBox}" Margin="0,0,0,10"/>
+
+            <!-- YouTube API -->
+            <TextBlock Text="YouTube API (선택)" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
+            <TextBlock Text="API 키를 입력하면 스폰서 구간 조회가 더 정확해집니다. 없으면 HTML 검색으로 대체합니다."
+                       FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,6"/>
+            <PasswordBox x:Name="ApiKeyBox" Style="{StaticResource DarkPasswordBox}" Margin="0,0,0,14"/>
+
+            <!-- 하단 버튼: 적용은 창을 닫지 않는다 (6번 피드백) -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+                <Button Content="닫기" Width="84" Height="32" Margin="0,0,8,0" Click="Cancel_Click"
+                        Background="#1C1C1E" Foreground="#E5FFFFFF" BorderBrush="#33FFFFFF" BorderThickness="1"
+                        Cursor="Hand" FontWeight="SemiBold"/>
+                <Button x:Name="ApplyButton" Content="적용" Width="84" Height="32" Click="Apply_Click"
+                        Background="#0A84FF" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Bold"/>
+            </StackPanel>
         </StackPanel>
-
-        <TextBlock Text="스폰서 자동 스킵" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
-        <CheckBox x:Name="SponsorSkipEnabledCheck" Content="스폰서 구간 자동 스킵 사용"
-                  FontSize="13" Margin="0,2,0,6" Checked="SponsorSkipEnabled_Changed" Unchecked="SponsorSkipEnabled_Changed"/>
-        <StackPanel x:Name="SponsorCategoryPanel" Margin="16,0,0,0">
-            <CheckBox x:Name="SponsorSkipIntroCheck" Content="인트로 (intro)" FontSize="13" Margin="0,2,0,4"/>
-            <CheckBox x:Name="SponsorSkipOutroCheck" Content="아웃트로 (outro)" FontSize="13" Margin="0,2,0,4"/>
-            <CheckBox x:Name="SponsorSkipIntermissionCheck" Content="인터미션/자기소개 (intermission)" FontSize="13" Margin="0,2,0,4"/>
-            <CheckBox x:Name="SponsorSkipMusicOfftopicCheck" Content="음악과 무관한 구간 (music_offtopic)" FontSize="13" Margin="0,2,0,8"/>
-        </StackPanel>
-
-        <TextBlock Text="AI 비서" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
-        <CheckBox x:Name="AssistantEnabledCheck" Content="AI 비서 사용 (핫키: Ctrl+Shift+Space)"
-                  FontSize="13" Margin="0,2,0,6" Checked="AssistantEnabled_Changed" Unchecked="AssistantEnabled_Changed"/>
-        <TextBlock Text="프로바이더" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
-        <ComboBox x:Name="AiProviderCombo" FontSize="13" Width="280" HorizontalAlignment="Left"
-                  Margin="0,0,0,4" SelectionChanged="AiProvider_SelectionChanged">
-            <ComboBoxItem Content="LLM7 — 무료·키 불필요 (기본)"/>
-            <ComboBoxItem Content="Google Gemini — 무료 티어 (키 필요)"/>
-            <ComboBoxItem Content="OpenRouter — 무료 모델 (키 필요)"/>
-            <ComboBoxItem Content="Upstage Solar — 유료 (키 필요)"/>
-            <ComboBoxItem Content="Ollama — 내 PC 로컬 실행"/>
-        </ComboBox>
-        <TextBlock x:Name="AiProviderHintText" Text="키 입력 없이 바로 사용할 수 있습니다 (분당 30회)."
-                   FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,4"/>
-        <TextBlock x:Name="AiApiKeyLabel" Text="API 키" FontSize="12" Foreground="#555558" Margin="0,2,0,4"/>
-        <PasswordBox x:Name="AiApiKeyBox" FontSize="13" Margin="0,0,0,8"/>
-        <TextBlock Text="모델 (비우면 기본값 사용)" FontSize="12" Foreground="#555558" Margin="0,0,0,4"/>
-        <TextBox x:Name="AiModelBox" FontSize="13" Margin="0,0,0,12"/>
-
-        <TextBlock Text="YouTube API (선택)" FontSize="14" FontWeight="Bold" Foreground="#1C1C1E" Margin="0,6,0,8"/>
-        <TextBlock Text="API 키를 입력하면 스폰서 구간 조회가 더 정확해집니다. 없으면 HTML 검색으로 대체합니다."
-                   FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,6"/>
-        <PasswordBox x:Name="ApiKeyBox" FontSize="13" Margin="0,0,0,12"/>
-
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
-            <Button Content="취소" Width="80" Height="30" Margin="0,0,8,0" Click="Cancel_Click"/>
-            <Button Content="저장" Width="80" Height="30" Click="Save_Click"
-                    Background="#0A84FF" Foreground="White" BorderThickness="0" Cursor="Hand"/>
-        </StackPanel>
-    </StackPanel>
+    </Border>
 </Window>

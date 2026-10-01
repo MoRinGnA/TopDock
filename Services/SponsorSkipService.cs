@@ -28,6 +28,41 @@ namespace TopDock.Services
 
         public bool IsEnabled { get; set; } = true;
 
+        /// <summary>"auto"면 구간 진입 시 자동 seek, "manual"이면 진행바 마커와 건너뛰기 버튼만 제공.</summary>
+        public string Mode { get; set; } = "auto";
+
+        /// <summary>현재 재생 위치가 스킵 대상 구간 안에 있는지 (수동 스킵 버튼 표시용).</summary>
+        public bool IsInSkipSegment(TimeSpan position, TimeSpan duration)
+        {
+            if (!IsEnabled || _segments.Count == 0) return false;
+            foreach (var seg in _segments)
+            {
+                if (duration > TimeSpan.Zero && seg.StartTime >= duration) continue;
+                if (position >= seg.StartTime && position < seg.EndTime)
+                {
+                    // 잔여 구간이 1초 미만이면 굳이 버튼을 띄우지 않는다
+                    if (duration > TimeSpan.Zero && seg.EndTime - position < TimeSpan.FromSeconds(1)) return false;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>현재 위치가 속한 구간의 끝 시각 (수동 스킵 실행용). 구간 밖이면 null.</summary>
+        public TimeSpan? GetManualSkipTarget(TimeSpan position, TimeSpan duration)
+        {
+            if (!IsEnabled || _segments.Count == 0) return null;
+            foreach (var seg in _segments)
+            {
+                if (duration > TimeSpan.Zero && seg.StartTime >= duration) continue;
+                if (position >= seg.StartTime && position < seg.EndTime)
+                {
+                    return seg.EndTime;
+                }
+            }
+            return null;
+        }
+
         /// <summary>현재 트랙의 구간 정보가 준비되었는지 (진행바 마커 렌더링용)</summary>
         public bool HasSegments => _segments.Count > 0;
 
@@ -88,10 +123,12 @@ namespace TopDock.Services
 
         /// <summary>
         /// 재생 위치가 스킵 대상 구간 안에 들어왔는지 판정한다.
+        /// 자동 모드일 때만 seek 대상을 반환하고, 수동 모드면 항상 null(버튼 표시는 IsInSkipSegment가 담당).
         /// </summary>
         /// <returns>스킵해야 하면 구간 끝 시각, 아니면 null</returns>
         public TimeSpan? GetSkipTarget(TimeSpan position, TimeSpan duration)
         {
+            if (Mode != "auto") return null;
             if (!IsEnabled || _segments.Count == 0) return null;
 
             // seek/트랙 전환 직후 오탐 방지 쿨다운

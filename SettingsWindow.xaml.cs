@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using TopDock.Models;
 using TopDock.Services;
 
@@ -7,7 +8,7 @@ namespace TopDock
 {
     public partial class SettingsWindow : Window
     {
-        /// <summary>저장 후 MainWindow가 설정을 다시 적용할 수 있도록 알린다.</summary>
+        /// <summary>적용 후 MainWindow가 설정을 다시 적용할 수 있도록 알린다.</summary>
         public event System.EventHandler? SettingsSaved;
 
         public SettingsWindow()
@@ -33,6 +34,11 @@ namespace TopDock
             TopMarginValueText.Text = ((int)cfg.TopMargin).ToString();
 
             SponsorSkipEnabledCheck.IsChecked = cfg.SponsorSkipEnabled;
+            SponsorSkipModeCombo.SelectedIndex = cfg.SponsorSkipMode switch
+            {
+                "manual" => 1,
+                _ => 0 // auto
+            };
             SponsorSkipIntroCheck.IsChecked = cfg.SponsorSkipIntro;
             SponsorSkipOutroCheck.IsChecked = cfg.SponsorSkipOutro;
             SponsorSkipIntermissionCheck.IsChecked = cfg.SponsorSkipIntermission;
@@ -72,7 +78,7 @@ namespace TopDock
             AiProviderHintText.Text = provider switch
             {
                 "llm7" => "API 키 없이 바로 사용됩니다 (무료, 분당 30회).",
-                "gemini" => "aistudio.google.com에서 무료 키 발급 가능 (하루 1,500회).",
+                "gemini" => "aistudio.google.com에서 무료 키 발급 가능 (하루 1,500회). 모델 칸은 비워두면 gemini-3.5-flash를 씁니다.",
                 "openrouter" => "openrouter.ai에서 무료 키 발급 가능 (무료 모델 하루 50회).",
                 "upstage" => "console.upstage.ai에서 유료 키를 입력하세요.",
                 "ollama" => "ollama 실행 중이어야 합니다. 예: ollama pull qwen3:4b",
@@ -92,7 +98,7 @@ namespace TopDock
 
         private void AssistantEnabled_Changed(object sender, RoutedEventArgs e)
         {
-            // UI만 토글; 실제 저장은 Save_Click에서
+            // UI만 토글; 실제 저장은 Apply_Click에서
         }
 
         private void TopMarginSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -111,7 +117,7 @@ namespace TopDock
             }
         }
 
-        private void Save_Click(object sender, RoutedEventArgs e)
+        private void SaveConfigFromUi()
         {
             var cfg = ConfigService.Current;
 
@@ -127,6 +133,7 @@ namespace TopDock
             cfg.TopMargin = (int)TopMarginSlider.Value;
 
             cfg.SponsorSkipEnabled = SponsorSkipEnabledCheck.IsChecked == true;
+            cfg.SponsorSkipMode = SponsorSkipModeCombo.SelectedIndex == 1 ? "manual" : "auto";
             cfg.SponsorSkipIntro = SponsorSkipIntroCheck.IsChecked == true;
             cfg.SponsorSkipOutro = SponsorSkipOutroCheck.IsChecked == true;
             cfg.SponsorSkipIntermission = SponsorSkipIntermissionCheck.IsChecked == true;
@@ -140,13 +147,31 @@ namespace TopDock
             cfg.AiModel = AiModelBox.Text.Trim();
 
             ConfigService.Save();
+        }
+
+        private void Apply_Click(object sender, RoutedEventArgs e)
+        {
+            // 6번 피드백: 적용 후에도 창을 닫지 않는다
+            SaveConfigFromUi();
             SettingsSaved?.Invoke(this, System.EventArgs.Empty);
-            Close();
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ButtonState == MouseButtonState.Pressed)
+            {
+                try { DragMove(); } catch { }
+            }
         }
     }
 }

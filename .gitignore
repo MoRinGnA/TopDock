@@ -3,3 +3,8 @@ obj/
 .freebuff/
 .vs/
 *.user
+# Frontend (battery renderer: React + metal-fx)
+node_modules/
+battery/dist/
+battery/ssr-manifest.json
+

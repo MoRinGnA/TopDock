@@ -67,16 +67,13 @@ namespace TopDock
         private readonly NotificationService _notificationService;
         private readonly SponsorSkipService _sponsorSkip;
         private readonly AssistantService _assistant;
+        private readonly YouTubeSearchService _youTubeSearch = new();
         private SettingsWindow? _settingsWindow;
         private string _lastMarkerSignature = string.Empty;
 
         // ── AI 비서 상태 ──
         private CancellationTokenSource? _assistantCts;
         private bool _assistantBusy;
-        private TextBlock? _assistantAnswerBlock;
-        private float _lastBatteryPercent = -1;
-        private bool _lastBatteryCharging;
-
         // 클립보드 히스토리 (최근 5개, 최신이 앞; 텍스트/이미지 혼합)
         private sealed record ClipboardItem(string Text, BitmapSource? Image)
         {
@@ -109,15 +106,14 @@ namespace TopDock
         private bool _hasLyrics = false;
         private bool _isVolumeAdjusting = false;
         private bool _volumeBarVisible = false;
-        private bool _ambientActive = false;
-        private Color _currentAmbientColor = Colors.Transparent;
+        private bool HasMedia => !string.IsNullOrEmpty(_lastMediaKey);
         private List<LyricLine> _syncedLyrics = new();
         private System.Windows.Forms.NotifyIcon? _trayIcon;
-        private bool HasMedia => !string.IsNullOrEmpty(_lastMediaKey);
 
         public MainWindow()
         {
             InitializeComponent();
+            StartStatusSheen(); // 상태 텍스트 광택 스윕 (원작 thinking-orbs 디테일)
 
             ConfigService.Load();
 
@@ -126,8 +122,9 @@ namespace TopDock
             _lyricsService = new LyricsService();
             _batteryService = new BatteryService();
             _notificationService = new NotificationService();
-            _sponsorSkip = new SponsorSkipService { IsEnabled = ConfigService.Current.SponsorSkipEnabled };
+            _sponsorSkip = new SponsorSkipService { IsEnabled = ConfigService.Current.SponsorSkipEnabled, Mode = ConfigService.Current.SponsorSkipMode };
             _assistant = new AssistantService();
+            _assistant.ToolExecutor = ExecuteAssistantToolAsync;
 
             _progressTimer = new DispatcherTimer
             {
@@ -148,7 +145,6 @@ namespace TopDock
             _mediaService.PlaybackStatusChanged += MediaService_PlaybackStatusChanged;
             _mediaService.TimelineChanged += MediaService_TimelineChanged;
 
-            _batteryService.BatteryStatusChanged += BatteryService_BatteryStatusChanged;
             _notificationService.NotificationReceived += NotificationService_NotificationReceived;
 
             // 참고: DeltaReceived는 SendAssistantMessageAsync의 DeltaProxy가 유일 구독자다.
@@ -302,29 +298,13 @@ namespace TopDock
 
             if (!ConfigService.Current.ShowClipboardToast) return;
 
-            if (item.IsImage)
-            {
-                NotifCompactAppText.Text = "\U0001F4F7 캡처됨";
-                NotifCompactTitleText.Text = $"{item.Image!.PixelWidth}×{item.Image.PixelHeight}";
-            }
-            else
-            {
-                NotifCompactAppText.Text = "\U0001f4cb 복사됨";
-                NotifCompactTitleText.Text = item.Text.Length > 20 ? item.Text.Substring(0, 20) + "..." : item.Text;
-            }
-
-            RenderClipboardHistory();
-
-            // 확장된 아일랜드에 클립보드 스트립이 이미 붙어 있으면 캡슐 대신 스트립 행만 갱신
-            bool stripShown = _isExpanded && _clipboardStripVisible &&
-                (_currentViewMode == ViewMode.IdleExpanded || _currentViewMode == ViewMode.MediaExpanded);
-            if (!stripShown)
-            {
-                string sideText = item.IsImage
-                    ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
-                    : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
-                ShowClipboardSideCapsule(sideText);
-            }
+            // 캡처/복사 알림은 노치 본체 텍스트를 건드리지 않고 —
+            // 항상 오른쪽으로 붙어 늘어나는 캡슐 하나로만 표시한다 (모든 뷰 공통, 통일성).
+            // 캡처 즉시 캡슐이 뜨고, 캡슐을 클릭하면 기록 패널(오른쪽 아래 펼침)로 이어진다.
+            string sideText = item.IsImage
+                ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
+                : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
+            ShowClipboardSideCapsule(sideText);
 
             // Task.Delay 대신 재시작 가능한 일회성 타이머로 연속 복사 시 경쟁 상태 제거
             if (_clipboardToastTimer == null)
@@ -419,29 +399,156 @@ namespace TopDock
             HideClipboardSideCapsule();
         }
 
+        // ── 클립보드 기록 패널: 캡슐 클릭 → 오른쪽 아래로 펼쳐지는 최근 5개 ──
+
+        private bool _clipboardHistoryOpen;
+
+        private void ClipboardSideCapsule_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (_clipboardHistoryOpen)
+            {
+                HideClipboardHistoryPanel();
+            }
+            else if (_clipboardHistory.Count > 0)
+            {
+                ShowClipboardHistoryPanel();
+            }
+            e.Handled = true;
+        }
+
+        private void ShowClipboardHistoryPanel()
+        {
+            BuildClipboardHistoryRows();
+            _clipboardHistoryOpen = true;
+            RepositionClipboardHistoryPanel();
+
+            // 캡슐 타이머 정지 — 기록을 보는 동안 캡슐이 사라지지 않게
+            _clipboardToastTimer?.Stop();
+
+            ClipboardHistoryPanel.Visibility = Visibility.Visible;
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
+            var dur = new Duration(TimeSpan.FromMilliseconds(280));
+            var opacity = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
+            var slide = new DoubleAnimation(-8, 0, dur) { EasingFunction = ease };
+            Timeline.SetDesiredFrameRate(opacity, 60);
+            Timeline.SetDesiredFrameRate(slide, 60);
+            ClipboardHistoryPanel.BeginAnimation(UIElement.OpacityProperty, opacity);
+            ClipboardHistoryTransform.BeginAnimation(TranslateTransform.YProperty, slide);
+        }
+
+        private void HideClipboardHistoryPanel()
+        {
+            if (!_clipboardHistoryOpen) return;
+            _clipboardHistoryOpen = false;
+
+            var dur = new Duration(TimeSpan.FromMilliseconds(200));
+            var opacity = new DoubleAnimation(0, dur);
+            opacity.Completed += (s, e) =>
+            {
+                if (!_clipboardHistoryOpen) ClipboardHistoryPanel.Visibility = Visibility.Collapsed;
+            };
+            ClipboardHistoryPanel.BeginAnimation(UIElement.OpacityProperty, opacity);
+            ClipboardHistoryTransform.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(-8, dur));
+        }
+
+        private void BuildClipboardHistoryRows()
+        {
+            ClipboardHistoryRows.Children.Clear();
+            int count = Math.Min(_clipboardHistory.Count, 5);
+            for (int i = 0; i < count; i++)
+            {
+                ClipboardItem item = _clipboardHistory[i];
+                string label = item.IsImage
+                    ? $"🖼 캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
+                    : (item.Text.Length > 28 ? item.Text[..28].ReplaceLineEndings(" ") + "…" : item.Text.ReplaceLineEndings(" "));
+
+                var rowBorder = new Border
+                {
+                    Background = Brushes.Transparent,
+                    CornerRadius = new CornerRadius(9),
+                    Padding = new Thickness(10, 6, 10, 6),
+                    Cursor = System.Windows.Input.Cursors.Hand,
+                    Tag = item,
+                };
+                rowBorder.MouseLeftButtonUp += ClipboardHistoryRow_Click;
+                rowBorder.MouseEnter += (s, e) => rowBorder.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+                rowBorder.MouseLeave += (s, e) => rowBorder.Background = Brushes.Transparent;
+
+                var text = new TextBlock
+                {
+                    Text = label,
+                    Foreground = new SolidColorBrush(Color.FromArgb(0xE5, 0xFF, 0xFF, 0xFF)),
+                    FontSize = 12,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                };
+                rowBorder.Child = text;
+                ClipboardHistoryRows.Children.Add(rowBorder);
+            }
+        }
+
+        private void ClipboardHistoryRow_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is Border border && border.Tag is ClipboardItem item)
+            {
+                try
+                {
+                    _suppressNextClipboardEvent = true;
+                    if (item.IsImage && item.Image != null)
+                        Clipboard.SetImage(item.Image);
+                    else if (!string.IsNullOrWhiteSpace(item.Text))
+                        Clipboard.SetText(item.Text);
+                }
+                catch
+                {
+                    _suppressNextClipboardEvent = false;
+                }
+                HideClipboardHistoryPanel();
+            }
+        }
+
         // ── 클립보드 사이드 캡슐 (본체 오른쪽에서 분리 확장) ──
 
         private void ShowClipboardSideCapsule(string text)
         {
             ClipboardSideText.Text = text;
+            // 내용에 맞는 자연 폭을 먼저 확정한다 — Width 애니메이션은 이 값을 목표로 쓴다.
+            // 여유 +14px를 줘야 폰트 메트릭 오차로 글자 끝이 잘리지 않는다 (실측 버그)
+            ClipboardSideCapsule.Width = double.NaN; // Auto로 풀어 측정
             ClipboardSideCapsule.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double naturalWidth = Math.Max(80, ClipboardSideCapsule.DesiredSize.Width + 14);
+
+            // 7번 피드백: 물리 크기 정규화 — 175%에서 본 실제 크기를 어느 배율에서든 유지
+            double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+            double norm = dpiScale > 0 ? Math.Min(1.75 / dpiScale, 2.2) : 1.0;
+            ClipboardSideDpiScale.ScaleX = norm;
+            ClipboardSideDpiScale.ScaleY = norm;
+
+            // 퇴장 잔여값 완전 초기화 (낙하·투명도·폭·변형 통짜 리셋)
+            ResetCapsuleTransforms();
+            // 시작 폭을 고정하고 Visible — Width가 NaN이면 애니메이션 시작값이 무의미해진다
+            ClipboardSideCapsule.Width = naturalWidth * 0.45;
+            ClipboardSideCapsule.Visibility = Visibility.Visible;
 
             RepositionClipboardSideCapsule();
 
-            // 스윕 진입: 본체 쪽에서 26px 흘러나오듯
-            ClipboardSideTransform.X = -26;
-            ClipboardSideCapsule.Visibility = Visibility.Visible;
-
+            // 등장: 노치에서 오른쪽으로 붙어 폭이 자라나는 확장 (ScaleTransform 폐기 — 텍스트 왜곡 없음)
             var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
             var dur = new Duration(TimeSpan.FromMilliseconds(420));
 
-            var opacity = new DoubleAnimation(1, dur) { EasingFunction = ease };
-            var slide = new DoubleAnimation(0, dur) { EasingFunction = ease };
+            var opacity = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
+            var grow = new DoubleAnimation(naturalWidth * 0.35, naturalWidth, dur) { EasingFunction = ease };
+            grow.Completed += (s, e) =>
+            {
+                // 애니메이션 후 폭을 Auto로 복원 — 어떤 텍스트 길이든 끝까지 보인다
+                ClipboardSideCapsule.BeginAnimation(FrameworkElement.WidthProperty, null);
+                ClipboardSideCapsule.Width = double.NaN;
+            };
             Timeline.SetDesiredFrameRate(opacity, 60);
-            Timeline.SetDesiredFrameRate(slide, 60);
+            Timeline.SetDesiredFrameRate(grow, 60);
 
-            ClipboardSideCapsule.BeginAnimation(OpacityProperty, opacity);
-            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
+            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, opacity);
+            ClipboardSideCapsule.BeginAnimation(FrameworkElement.WidthProperty, grow);
         }
 
         // 캡슐 추적 루프: 본체가 애니메이션 중인 동안 매 프레임 위치 재계산
@@ -469,7 +576,8 @@ namespace TopDock
         {
             if (ClipboardSideCapsule.Visibility != Visibility.Visible) return;
 
-            double gap = 8;
+            // 노치에서 오른쪽으로 '붙어서' 넓어진 느낌 — 살짝 겹쳐 테두리가 이어지게 한다
+            double gap = -2;
 
             // 본체가 아직 레이아웃 전(ActualWidth 0)이면 실측 좌표가 화면 좌상단을 가리킨다 —
             // 이 경우가 시작 직후 캡슐이 좌상단에 뜨던 원인. 선언 폭 기준으로 중앙 오른쪽에 배치한다.
@@ -482,13 +590,18 @@ namespace TopDock
 
             try
             {
-                // 레이아웃 후에는 본체 우상단 모서리의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확
-                Point notchTopRight = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth, 0));
+                // 레이아웃 후에는 본체 우측 중앙의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확.
+                // 스케일 정규화가 RenderTransformOrigin(0,0.5)라 세로 중앙 기준으로 확대되므로
+                // 앵커도 세로 중앙 (ActualHeight/2)으로 잡아야 100% 화면에서 캡슐이 아래로 처지지 않는다 (실측 버그)
+                Point notchRightCenter = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth, NotchBorder.ActualHeight / 2));
                 Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
                 double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                double scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
+                double dpiNormY = scaleY > 0 ? Math.Min(1.75 / scaleY, 2.2) : 1.0;
 
-                Canvas.SetLeft(ClipboardSideCapsule, (notchTopRight.X - canvasOrigin.X) / dpi + gap);
-                Canvas.SetTop(ClipboardSideCapsule, (notchTopRight.Y - canvasOrigin.Y) / dpi);
+                double capsuleHalf = ClipboardSideCapsule.Height / 2;
+                Canvas.SetLeft(ClipboardSideCapsule, (notchRightCenter.X - canvasOrigin.X) / dpi + gap);
+                Canvas.SetTop(ClipboardSideCapsule, (notchRightCenter.Y - canvasOrigin.Y) / scaleY - capsuleHalf);
             }
             catch
             {
@@ -499,23 +612,80 @@ namespace TopDock
 
         private void HideClipboardSideCapsule()
         {
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 5 };
-            var dur = new Duration(TimeSpan.FromMilliseconds(320));
+            HideClipboardHistoryPanel(); // 열려 있던 기록 패널도 함께 닫는다
 
             StopCapsuleTracking();
 
+            // 오른쪽으로 밀리며 아래로 낙하·소멸하는 버블 퇴장 (11번 피드백)
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 5 };
+            var dur = new Duration(TimeSpan.FromMilliseconds(460));
+
             var opacity = new DoubleAnimation(0, dur) { EasingFunction = ease };
-            var slide = new DoubleAnimation(26, dur) { EasingFunction = ease }; // 오른쪽 바깥으로 스윕 아웃
+            var slide = new DoubleAnimation(30, new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = ease };
+            var drop = new DoubleAnimation
+            {
+                From = 0,
+                To = 56,
+                EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 2.2 }, // 낙하 가속
+                Duration = new Duration(TimeSpan.FromMilliseconds(460)),
+            };
+            Timeline.SetDesiredFrameRate(opacity, 60);
+            Timeline.SetDesiredFrameRate(slide, 60);
+            Timeline.SetDesiredFrameRate(drop, 60);
+
             opacity.Completed += (s, e) =>
             {
                 if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
                 {
                     ClipboardSideCapsule.Visibility = Visibility.Collapsed;
+                    ResetCapsuleTransforms();
                 }
             };
 
-            ClipboardSideCapsule.BeginAnimation(OpacityProperty, opacity);
+            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, opacity);
             ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
+            ClipboardSideDropTransform.BeginAnimation(TranslateTransform.YProperty, drop);
+        }
+
+        /// <summary>캡슐 변형·폭·투명도의 모든 잔여값을 완전 초기화한다. 등장 직전에도 호출.</summary>
+        private void ResetCapsuleTransforms()
+        {
+            // 애니메이션 HoldEnd 잔여값을 전부 제거해 다음 등장이 항상 같은 상태에서 시작하게 한다 (실측 버그)
+            ClipboardSideDropTransform.BeginAnimation(TranslateTransform.YProperty, null);
+            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, null);
+            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, null);
+            ClipboardSideDropTransform.Y = 0;
+            ClipboardSideTransform.X = 0;
+            ClipboardSideCapsule.Opacity = 0;
+            ClipboardSideCapsule.Width = double.NaN;
+        }
+
+        // 캡슐 위치 계산에 쓰는 좌표를 기록 패널도 공유 — 캡슐 아래에 붙인다
+        private void RepositionClipboardHistoryPanel()
+        {
+            if (ClipboardHistoryPanel.Visibility != Visibility.Visible) return;
+            try
+            {
+                double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                double scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
+
+                // 패널은 캡슐의 오른쪽 아래에 붙인다 — 아래로 펼쳐지는 느낌은 유지하되
+                // 캡슐과 가로로 정렬돼 통일감을 준다 (DPI 정규화 스케일도 동일 적용)
+                double dpiNorm = VisualTreeHelper.GetDpi(this).DpiScaleY;
+                double panelScale = dpiNorm > 0 ? Math.Min(1.75 / dpiNorm, 2.2) : 1.0;
+                ClipboardHistoryPanel.LayoutTransform = new ScaleTransform(panelScale, panelScale);
+
+                Point capsuleBottomRight = ClipboardSideCapsule.PointToScreen(
+                    new Point(ClipboardSideCapsule.ActualWidth, ClipboardSideCapsule.ActualHeight));
+                Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
+                Canvas.SetLeft(ClipboardHistoryPanel, (capsuleBottomRight.X - canvasOrigin.X) / dpi - ClipboardHistoryPanel.ActualWidth);
+                Canvas.SetTop(ClipboardHistoryPanel, (capsuleBottomRight.Y - canvasOrigin.Y) / scaleY + 8);
+            }
+            catch
+            {
+                Canvas.SetLeft(ClipboardHistoryPanel, Canvas.GetLeft(ClipboardSideCapsule));
+                Canvas.SetTop(ClipboardHistoryPanel, Canvas.GetTop(ClipboardSideCapsule) + 50);
+            }
         }
 
         private void UpdatePosition()
@@ -530,12 +700,6 @@ namespace TopDock
         {
             // 시계 UI는 없앴지만 시각은 AI 비서 컨텍스트용으로 계속 갱신
             _currentClockText = DateTime.Now.ToString("yyyy-MM-dd dddd HH:mm");
-
-            // 대화가 열린 채로 시간대가 넘어가면 글로우 팔레트도 자동 전환 (색 크로스페이드)
-            if (_currentViewMode == ViewMode.Assistant && GlowPeriod() != _lastGlowPeriod)
-            {
-                SetAssistantGlow();
-            }
         }
 
         private string _currentClockText = string.Empty;
@@ -546,56 +710,20 @@ namespace TopDock
             _currentViewMode == ViewMode.IdleExpanded ? ExpandedFace :
             _currentViewMode == ViewMode.IdleCompact ? CompactFace : null;
 
-        /// <summary>Idle 상태에서 상황에 맞는 능동적 메시지와 표정을 고른다.</summary>
+        /// <summary>Idle 상태에서 표정만 갱신한다. 인사·상태 텍스트는 전면 제거 (미니멀 원칙).</summary>
         private void RefreshIdleFace()
         {
             var face = ActiveFace;
             if (face == null) return;
             face.SetState(Controls.AiFace.FaceState.Idle);
-
-            string status;
-            var media = _mediaService.CurrentMedia;
-            if (media != null && media.IsPlaying && !string.IsNullOrWhiteSpace(media.Title) && media.Title != "재생 중인 미디어 없음")
-            {
-                status = $"{TruncateStatus(media.Title)} 듣는 중";
-            }
-            else if (_lastBatteryPercent >= 0 && _lastBatteryPercent <= 0.20f && !_lastBatteryCharging)
-            {
-                status = "배터리가 좀 부족해";
-            }
-            else
-            {
-                status = DateTime.Now.Hour switch
-                {
-                    >= 23 or < 6 => "아직 안 잤어?",
-                    < 9 => "좋은 아침",
-                    < 12 => "오늘 일정 뭐 있어?",
-                    < 14 => "점심은 먹었어?",
-                    < 18 => "오후니까 커피 한 잔",
-                    < 22 => "저녁이네, 잘 지내?",
-                    _ => "안녕, 나 여기 있어"
-                };
-            }
-
-            ExpandedFaceStatusText.Text = status;
-        }
-
-        private static string TruncateStatus(string s)
-        {
-            s = s.Trim();
-            return s.Length <= 12 ? s : s[..12] + "…";
         }
 
         private void Notch_MouseEnter(object sender, MouseEventArgs e)
         {
             _isExpanded = true;
 
-            // 확장되면 클립보드 스트립이 안에 붙으므로 사이드 캡슐은 물러난다 (같은 정보 이중 노출 방지)
-            if (ClipboardSideCapsule.Visibility == Visibility.Visible)
-            {
-                _clipboardToastTimer?.Stop();
-                HideClipboardSideCapsule();
-            }
+            // 클립보드 캡슐은 호버와 무관하게 유지한다 — 본체 안 스트립은 철폐됐으므로
+            // 캡슐이 유일한 클립보드 UI다 (확장 얼굴/AI 탭에서도 계속 보여야 함)
 
             if (_currentViewMode == ViewMode.Assistant) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
@@ -642,318 +770,28 @@ namespace TopDock
             e.Handled = true;
         }
 
-        private static readonly Duration AmbientColorFade = new Duration(TimeSpan.FromMilliseconds(600));
+        // ── 노치 테두리 빛: 원본 border-beam을 순정 그대로 사용(색·강도 커스텀 없음).
+        //    beam은 콘텐츠 위에서 항상 도는 오버레이라 XAML에서 Active=True 상태로 상주한다.
+        //    앨범색·시간대 팔레트 등 기존 엠비언트 라이트는 전부 제거됐다.
 
-        private void SetAmbientColor(Color color, Color? secondaryColor = null)
-        {
-            // AI 비서 화면에서는 전용 글로우가 켜져 있으므로 앨범 색이 그것을 덮지 않게 한다
-            if (_currentViewMode == ViewMode.Assistant) return;
-
-            Color primary = EnhanceAmbientColor(color);
-            Color secondary = secondaryColor ?? GenerateShiftedColor(primary, 14);
-
-            _currentAmbientColor = primary;
-
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-
-            void AnimateStop(GradientStop stop, Color to)
-            {
-                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
-                stop.BeginAnimation(GradientStop.ColorProperty, anim);
-            }
-
-            // 색은 진하게 유지하되 확산은 노치 바로 옆에 머물게 해서 '빛 안개'가 되지 않도록
-            Color aura1 = Color.FromArgb(170, primary.R, primary.G, primary.B);
-            Color aura2 = Color.FromArgb(60, secondary.R, secondary.G, secondary.B);
-            Color rim1 = Color.FromArgb(215, primary.R, primary.G, primary.B);
-            Color rim2 = Color.FromArgb(180, secondary.R, secondary.G, secondary.B);
-
-            // 트랙 전환 시 색이 뿅 바뀌지 않고 자연스럽게 크로스페이드되도록
-            if (_ambientActive)
-            {
-                AnimateStop(AuraColorStop1, aura1);
-                AnimateStop(AuraColorStop2, aura2);
-                AnimateStop(RimColorStop1, rim1);
-                AnimateStop(RimColorStop2, rim2);
-            }
-            else
-            {
-                // 첫 표시는 즉시 적용 (브레스 애니메이션 페이드인이 자연스럽게 이어줌)
-                AuraColorStop1.Color = aura1;
-                AuraColorStop2.Color = aura2;
-                RimColorStop1.Color = rim1;
-                RimColorStop2.Color = rim2;
-            }
-
-            // Sync compact equalizer bars to vibrant ambient color
-            var eqFade = new ColorAnimation { To = primary, Duration = AmbientColorFade, EasingFunction = ease };
-            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
-            {
-                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
-                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqFade);
-                else
-                    bar.Background = new SolidColorBrush(primary);
-            }
-
-            if (!_ambientActive)
-            {
-                _ambientActive = true;
-                StartAmbientBreathAnimation();
-            }
-        }
-
-        private void ClearAmbientLight()
-        {
-            // AI 비서 화면 종료 직후 복원 로직이 맡도록, 비서 화면에서는 지우지 않는다
-            if (_currentViewMode == ViewMode.Assistant) return;
-
-            // 미디어가 없어도 아일랜드가 죽은 검은 알약이 되지 않게:
-            // 은은한 AI 대기광(시간대 팔레트)을 항상 켜둔다
-            _ambientActive = false;
-            StopAmbientBreathAnimation();
-            SetIdleGlow();
-            return;
-        }
-
-        /// <summary>미디어 없는 평소 상태의 은은한 대기광. 낮은 강도로 항상 존재감을 유지한다.</summary>
-        private void SetIdleGlow()
-        {
-            (Color primary, Color secondary, double breatheMin, double breatheMax, double breatheSeconds) = GlowPeriod() switch
-            {
-                0 => (Color.FromRgb(0x4C, 0x1D, 0x95), Color.FromRgb(0x1E, 0x3A, 0x8A), 0.25, 0.42, 3.6), // 밤: 딥 퍼플+네이비, 아주 잔잔
-                1 => (Color.FromRgb(0xB4, 0x74, 0x0A), Color.FromRgb(0x0C, 0x4A, 0x6E), 0.35, 0.52, 2.8), // 아침: 골드 브론즈+딥 스카이
-                3 => (Color.FromRgb(0x9F, 0x30, 0x59), Color.FromRgb(0x6B, 0x21, 0xA8), 0.32, 0.50, 3.0), // 저녁: 와인+딥 퍼플
-                _ => (Color.FromRgb(0x5B, 0x30, 0xB8), Color.FromRgb(0x0E, 0x74, 0x91), 0.35, 0.52, 2.8), // 낮: 딥 바이올렛+딥 시안
-            };
-            _lastGlowPeriod = GlowPeriod();
-
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-            void AnimateStop(GradientStop stop, Color to)
-            {
-                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
-                stop.BeginAnimation(GradientStop.ColorProperty, anim);
-            }
-
-            // 대기광은 강하게 켜지 않는다 — 어두운 헤일로 정도의 존재감
-            Color aura1 = Color.FromArgb(110, primary.R, primary.G, primary.B);
-            Color aura2 = Color.FromArgb(45, secondary.R, secondary.G, secondary.B);
-            Color rim1 = Color.FromArgb(150, primary.R, primary.G, primary.B);
-            Color rim2 = Color.FromArgb(110, secondary.R, secondary.G, secondary.B);
-
-            AnimateStop(AuraColorStop1, aura1);
-            AnimateStop(AuraColorStop2, aura2);
-            AnimateStop(RimColorStop1, rim1);
-            AnimateStop(RimColorStop2, rim2);
-
-            var breathe = new DoubleAnimation(breatheMin, breatheMax, TimeSpan.FromSeconds(breatheSeconds))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease
-            };
-            Timeline.SetDesiredFrameRate(breathe, 30);
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathe);
-        }
-
-        private void StartAmbientBreathAnimation()
-        {
-            StopAmbientBreathAnimation();
-
-            var breathAnim = new DoubleAnimation(0.62, 0.96, TimeSpan.FromSeconds(2.4))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-            };
-            Timeline.SetDesiredFrameRate(breathAnim, 30);
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathAnim);
-        }
-
-        /// <summary>AI 전용 글로우 — 시간대별 팔레트 + 스월: 오라가 공전하고 림에 광택이 흐른다.</summary>
-        private Storyboard? _assistantGlowStoryboard;
-        private int _lastGlowPeriod = -1;
-
-        private static int GlowPeriod() => DateTime.Now.Hour switch
-        {
-            >= 23 or < 6 => 0, // 밤
-            < 9 => 1,          // 아침
-            < 18 => 2,         // 낮
-            _ => 3             // 저녁
-        };
-
-        private void SetAssistantGlow()
-        {
-            (Color primary, Color secondary, double breatheMin, double breatheMax, double breatheSeconds) = GlowPeriod() switch
-            {
-                0 => (Color.FromRgb(0x6D, 0x28, 0xD9), Color.FromRgb(0x1E, 0x40, 0xAF), 0.55, 0.80, 3.2), // 밤: 딥 바이올렛+인디고, 잔잔하게
-                1 => (Color.FromRgb(0xF5, 0x9E, 0x0B), Color.FromRgb(0x38, 0xBD, 0xF8), 0.80, 1.00, 2.0), // 아침: 골드+하늘
-                3 => (Color.FromRgb(0xFB, 0x71, 0x85), Color.FromRgb(0xA7, 0x5C, 0xF6), 0.75, 0.95, 2.4), // 저녁: 노을 핑크+퍼플
-                _ => (Color.FromRgb(0x8B, 0x5C, 0xF6), Color.FromRgb(0x22, 0xD3, 0xEE), 0.82, 1.00, 2.0), // 낮: 바이올렛+시안 (시그니처)
-            };
-            _lastGlowPeriod = GlowPeriod();
-
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-            void AnimateStop(GradientStop stop, Color to)
-            {
-                var anim = new ColorAnimation { To = to, Duration = AmbientColorFade, EasingFunction = ease };
-                stop.BeginAnimation(GradientStop.ColorProperty, anim);
-            }
-
-            Color aura1 = Color.FromArgb(200, primary.R, primary.G, primary.B);
-            Color aura2 = Color.FromArgb(90, secondary.R, secondary.G, secondary.B);
-            Color rim1 = Color.FromArgb(235, primary.R, primary.G, primary.B);
-            Color rim2 = Color.FromArgb(210, secondary.R, secondary.G, secondary.B);
-
-            if (_ambientActive)
-            {
-                AnimateStop(AuraColorStop1, aura1);
-                AnimateStop(AuraColorStop2, aura2);
-                AnimateStop(RimColorStop1, rim1);
-                AnimateStop(RimColorStop2, rim2);
-            }
-            else
-            {
-                AuraColorStop1.Color = aura1;
-                AuraColorStop2.Color = aura2;
-                RimColorStop1.Color = rim1;
-                RimColorStop2.Color = rim2;
-            }
-
-            var eqFade = new ColorAnimation { To = primary, Duration = AmbientColorFade, EasingFunction = ease };
-            foreach (var bar in new[] { EqBar1, EqBar2, EqBar3 })
-            {
-                if (bar.Background is SolidColorBrush eqBrush && !eqBrush.IsFrozen)
-                    eqBrush.BeginAnimation(SolidColorBrush.ColorProperty, eqFade);
-                else
-                    bar.Background = new SolidColorBrush(primary);
-            }
-
-            if (!_ambientActive)
-            {
-                _ambientActive = true;
-                NotchAmbientContainer.Opacity = 0.85;
-            }
-
-            StopAmbientBreathAnimation();
-            StartAssistantSwirl(breatheMin, breatheMax, breatheSeconds);
-        }
-
-        /// <summary>오라 중심이 노치 주위를 공전하고 림 광택이 흐르는 스월. (검증된 PropertyPath만 사용)</summary>
-        private void StartAssistantSwirl(double breatheMin, double breatheMax, double breatheSeconds)
-        {
-            StopAssistantSwirl();
-
-            _assistantGlowStoryboard = new Storyboard();
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-
-            // 1) 오라 중심이 대각선으로 왕복 — 빛이 도는 느낌 (3.2초 왕복)
-            var centerAnim = new PointAnimation
-            {
-                From = new Point(0.28, 0.32),
-                To = new Point(0.72, 0.68),
-                Duration = TimeSpan.FromSeconds(3.2),
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease
-            };
-            Storyboard.SetTarget(centerAnim, NotchAmbientAura);
-            Storyboard.SetTargetProperty(centerAnim, new PropertyPath("(Border.Background).(RadialGradientBrush.Center)"));
-            _assistantGlowStoryboard.Children.Add(centerAnim);
-
-            // 2) 오라 원점도 반대 위상으로 — 중심과 원점이 어긋나며 스월 형태 생성
-            var originAnim = new PointAnimation
-            {
-                From = new Point(0.70, 0.70),
-                To = new Point(0.30, 0.30),
-                Duration = TimeSpan.FromSeconds(3.2),
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease
-            };
-            Storyboard.SetTarget(originAnim, NotchAmbientAura);
-            Storyboard.SetTargetProperty(originAnim, new PropertyPath("(Border.Background).(RadialGradientBrush.GradientOrigin)"));
-            _assistantGlowStoryboard.Children.Add(originAnim);
-
-            // 3) 림 광택: 바이올렛→시안 스톱 오프셋이 흐르며 테두리를 따라 빛이 이동
-            var rimShimmer = new DoubleAnimation(0.0, 1.0, TimeSpan.FromSeconds(2.2))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease
-            };
-            Storyboard.SetTarget(rimShimmer, NotchAmbientRim);
-            Storyboard.SetTargetProperty(rimShimmer, new PropertyPath("(Border.BorderBrush).(LinearGradientBrush.GradientStops)[0].(GradientStop.Offset)"));
-            _assistantGlowStoryboard.Children.Add(rimShimmer);
-
-            _assistantGlowStoryboard.Begin();
-
-            // 4) 컨테이너 미세 브레스 — 밤엔 더 잔잔하고 느리게 (기존 패턴 재사용)
-            var breathe = new DoubleAnimation(breatheMin, breatheMax, TimeSpan.FromSeconds(breatheSeconds))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease
-            };
-            Timeline.SetDesiredFrameRate(breathe, 30);
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, breathe);
-        }
-
-        private void StopAssistantSwirl()
-        {
-            _assistantGlowStoryboard?.Stop();
-            _assistantGlowStoryboard = null;
-            // 브레스도 함께 정지
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, null);
-        }
-
-        /// <summary>비서 화면을 나간 뒤 이전 글로우(앨범 색 또는 없음)로 복원.</summary>
-        private void RestoreGlowAfterAssistant()
-        {
-            if (_mediaService.CurrentMedia?.Thumbnail is BitmapSource bmp && bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48)
-            {
-                _ambientActive = false; // SetAmbientColor가 브레스 애니메이션을 다시 시작하게
-                SetAmbientColor(GetDominantColor(bmp));
-            }
-            else
-            {
-                ClearAmbientLight(); // 이제 검은 알약이 아니라 대기광으로 복원됨
-            }
-        }
-
-        private void StopAmbientBreathAnimation()
-        {
-            NotchAmbientContainer.BeginAnimation(UIElement.OpacityProperty, null);
-            NotchAmbientContainer.Opacity = 0;
-        }
-
+        /// <summary>노치 크기 변화에 맞춰 beam·메탈 링 캔버스를 함께 모핑한다(본체와 같은 크기 유지).</summary>
         private void UpdateGlowDimensions(double targetWidth, double targetHeight, double targetRadius, Duration duration, IEasingFunction ease)
         {
-            // 오로라는 노치 에지에서 20~30px 내로 빠르게 소멸하는 타이트한 헤일로
-            double auraW = targetWidth + 85;
-            double auraH = targetHeight + 28;
-            double auraRadius = targetRadius + 14;
+            var wAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
+            var hAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
+            var rAnim = new DoubleAnimation { To = targetRadius, Duration = duration, EasingFunction = ease };
 
-            double rimW = targetWidth + 4;
-            double rimH = targetHeight + 4;
-            double rimRadius = targetRadius + 2;
+            Timeline.SetDesiredFrameRate(wAnim, 60);
+            Timeline.SetDesiredFrameRate(hAnim, 60);
+            Timeline.SetDesiredFrameRate(rAnim, 60);
 
-            NotchAmbientAura.CornerRadius = new CornerRadius(auraRadius);
-            NotchAmbientRim.CornerRadius = new CornerRadius(rimRadius);
+            NotchBeam.BeginAnimation(WidthProperty, wAnim);
+            NotchBeam.BeginAnimation(HeightProperty, hAnim);
+            NotchBeam.BeginAnimation(Controls.BorderBeam.CornerRadiusProperty, rAnim);
 
-            var auraWAnim = new DoubleAnimation { To = auraW, Duration = duration, EasingFunction = ease };
-            var auraHAnim = new DoubleAnimation { To = auraH, Duration = duration, EasingFunction = ease };
-            var rimWAnim = new DoubleAnimation { To = rimW, Duration = duration, EasingFunction = ease };
-            var rimHAnim = new DoubleAnimation { To = rimH, Duration = duration, EasingFunction = ease };
-
-            Timeline.SetDesiredFrameRate(auraWAnim, 60);
-            Timeline.SetDesiredFrameRate(auraHAnim, 60);
-            Timeline.SetDesiredFrameRate(rimWAnim, 60);
-            Timeline.SetDesiredFrameRate(rimHAnim, 60);
-
-            NotchAmbientAura.BeginAnimation(Border.WidthProperty, auraWAnim);
-            NotchAmbientAura.BeginAnimation(Border.HeightProperty, auraHAnim);
-            NotchAmbientRim.BeginAnimation(Border.WidthProperty, rimWAnim);
-            NotchAmbientRim.BeginAnimation(Border.HeightProperty, rimHAnim);
+            NotchBeam.BeginAnimation(WidthProperty, wAnim);
+            NotchBeam.BeginAnimation(HeightProperty, hAnim);
+            NotchBeam.BeginAnimation(Controls.BorderBeam.CornerRadiusProperty, rAnim);
         }
 
         private double CalculateCompactWidth()
@@ -982,59 +820,6 @@ namespace TopDock
                 VisualTreeHelper.GetDpi(this).PixelsPerDip
             );
             return formattedText.Width;
-        }
-
-        private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
-        {
-            // AI 비서 컨텍스트용 최신 배터리 상태 유지
-            _lastBatteryPercent = e.BatteryPercent;
-            _lastBatteryCharging = e.IsCharging;
-
-            Dispatcher.Invoke(() =>
-            {
-                bool isNormal = !e.IsCharging && e.BatteryPercent > 0.20f;
-
-                if (isNormal)
-                {
-                    // Clear battery border modifications and restore style defaults
-                    NotchBorder.ClearValue(Border.BorderBrushProperty);
-                    
-                    // If no media is playing, clear glow. If media is playing, keep media glow.
-                    if (!HasMedia)
-                    {
-                        ClearAmbientLight();
-                    }
-                    return;
-                }
-
-                Color borderColor = e.IsCharging ? Color.FromRgb(57, 255, 20) : Color.FromRgb(255, 59, 48);
-
-                // Music art glow and border takes priority over battery!
-                if (!HasMedia)
-                {
-                    if (e.IsCharging)
-                        SetAmbientColor(borderColor, Color.FromRgb(10, 120, 5));
-                    else
-                        SetAmbientColor(borderColor, Color.FromRgb(150, 15, 10));
-
-                    // Create a LinearGradientBrush to act as a progress bar along the actual Notch border
-                    var gradient = new LinearGradientBrush
-                    {
-                        StartPoint = new Point(0, 0.5),
-                        EndPoint = new Point(1, 0.5)
-                    };
-                    gradient.GradientStops.Add(new GradientStop(borderColor, e.BatteryPercent));
-                    // Use the subtle notch border color (#33FFFFFF) for the unfilled portion so it blends perfectly
-                    gradient.GradientStops.Add(new GradientStop(Color.FromArgb(51, 255, 255, 255), e.BatteryPercent));
-
-                    NotchBorder.BorderBrush = gradient;
-                }
-                else
-                {
-                    // If media is playing, restore normal border
-                    NotchBorder.ClearValue(Border.BorderBrushProperty);
-                }
-            });
         }
 
         private void NotificationService_NotificationReceived(object? sender, NotificationEventArgs e)
@@ -1067,7 +852,6 @@ namespace TopDock
                         if (_viewModeBeforeNotification == ViewMode.Assistant)
                         {
                             SwitchViewMode(ViewMode.Assistant);
-                            SetAssistantGlow();
                             return;
                         }
                         if (_isExpanded)
@@ -1109,17 +893,10 @@ namespace TopDock
                     break;
                 case ViewMode.IdleExpanded:
                     targetWidth = 260;
-                    // 확장 진입 시 클립보드 히스토리가 있으면 하단 스트립을 자동 표시
-                    if (_clipboardHistory.Count > 0)
-                    {
-                        ShowClipboardStripExpanded();
-                    }
-                    targetHeight = CalculateIdleExpandedHeight();
+                    // 클립보드는 오른쪽 분리 패널로만 표시 — 본체 확장은 얼굴+상태+버튼만
+                    targetHeight = 120;
                     targetRadius = 26;
                     activeView = IdleExpandedView;
-                    // 스트립이 붙으면 본문을 상단 정렬해 아래로 늘어난 공간과 안 겹치게
-                    IdleExpandedView.VerticalAlignment = _clipboardStripVisible ? VerticalAlignment.Top : VerticalAlignment.Center;
-                    IdleExpandedView.Margin = _clipboardStripVisible ? new Thickness(0, 18, 0, 0) : new Thickness(0);
                     break;
                 case ViewMode.MediaCompact:
                     targetWidth = CalculateCompactWidth();
@@ -1152,11 +929,24 @@ namespace TopDock
                     activeView = NotificationExpandedView;
                     break;
                 case ViewMode.Assistant:
-                    targetWidth = 470;
-                    targetHeight = 320;
-                    targetRadius = 36;
+                    // 지시 콘솔은 컴팩트하게 — 큰 캔버스 대신 오브+결과+입력 3단 구성
+                    targetWidth = 420;
+                    targetHeight = 224;
+                    targetRadius = 30;
                     activeView = AssistantView;
+                    // 헤더 오버레이(오브+상태+버튼)는 본체 뷰와 독립적으로 함께 표시
+                    AssistantHeaderOverlay.IsHitTestVisible = true;
+                    AssistantHeaderOverlay.BeginAnimation(UIElement.OpacityProperty,
+                        new DoubleAnimation { To = 1, Duration = duration, EasingFunction = ease });
                     break;
+            }
+
+            // AI 탭이 아니면 헤더 오버레이를 닫는다 (독립 페이드아웃)
+            if (mode != ViewMode.Assistant)
+            {
+                AssistantHeaderOverlay.IsHitTestVisible = false;
+                AssistantHeaderOverlay.BeginAnimation(UIElement.OpacityProperty,
+                    new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(150)) });
             }
 
             SetViewActive(activeView, duration, ease);
@@ -1392,22 +1182,11 @@ namespace TopDock
                 {
                     ExpandedAlbumArtImage.Source = media.Thumbnail;
                     ExpandedDefaultIcon.Visibility = Visibility.Collapsed;
-
-                    var avgColor = GetDominantColor(validBmp);
-                    SetAmbientColor(avgColor);
                 }
                 else
                 {
                     ExpandedAlbumArtImage.Source = null;
                     ExpandedDefaultIcon.Visibility = Visibility.Visible;
-
-                    // 썸네일이 아직 도착 전(또는 파비콘으로 필터링됨).
-                    // 제목 해시 랜덤 색 대신: 이전 곡 글로우를 유지하다가 진짜 앨범 색이 오면 크로스페이드.
-                    // 첫 곡이라 살아 있는 글로우가 없으면 절제된 중립 모노톤으로 시작.
-                    if (!_ambientActive)
-                    {
-                        SetAmbientColor(Color.FromRgb(96, 96, 104));
-                    }
 
                     if (isNewTrack)
                     {
@@ -1418,196 +1197,6 @@ namespace TopDock
                 UpdatePlaybackState(media.IsPlaying);
                 UpdateTimelineDisplay(media.CurrentEstimatedPosition, media.Duration);
             });
-        }
-
-        private Color GenerateFallbackColor(string title)
-        {
-            int hash = Math.Abs(title.GetHashCode());
-            double hue = (hash % 360);
-            return HslToColor(hue, 0.82, 0.56);
-        }
-
-        private static void ColorToHsl(Color c, out double h, out double s, out double l)
-        {
-            double r = c.R / 255.0;
-            double g = c.G / 255.0;
-            double b = c.B / 255.0;
-
-            double max = Math.Max(r, Math.Max(g, b));
-            double min = Math.Min(r, Math.Min(g, b));
-            double delta = max - min;
-
-            l = (max + min) / 2.0;
-
-            if (delta < 0.00001)
-            {
-                h = 0;
-                s = 0;
-            }
-            else
-            {
-                s = l <= 0.5 ? delta / (max + min) : delta / (2.0 - max - min);
-
-                if (Math.Abs(r - max) < 0.00001)
-                    h = (g - b) / delta + (g < b ? 6.0 : 0.0);
-                else if (Math.Abs(g - max) < 0.00001)
-                    h = (b - r) / delta + 2.0;
-                else
-                    h = (r - g) / delta + 4.0;
-
-                h *= 60.0;
-            }
-        }
-
-        private static Color HslToColor(double h, double s, double l)
-        {
-            h = (h % 360 + 360) % 360;
-            s = Math.Clamp(s, 0.0, 1.0);
-            l = Math.Clamp(l, 0.0, 1.0);
-
-            double c = (1 - Math.Abs(2 * l - 1)) * s;
-            double x = c * (1 - Math.Abs((h / 60) % 2 - 1));
-            double m = l - c / 2;
-            double r = 0, g = 0, b = 0;
-
-            if (h < 60) { r = c; g = x; }
-            else if (h < 120) { r = x; g = c; }
-            else if (h < 180) { g = c; b = x; }
-            else if (h < 240) { g = x; b = c; }
-            else if (h < 300) { r = x; b = c; }
-            else { r = c; b = x; }
-
-            return Color.FromRgb(
-                (byte)Math.Clamp((r + m) * 255, 0, 255),
-                (byte)Math.Clamp((g + m) * 255, 0, 255),
-                (byte)Math.Clamp((b + m) * 255, 0, 255));
-        }
-
-        private static Color EnhanceAmbientColor(Color c)
-        {
-            ColorToHsl(c, out double h, out double s, out double l);
-
-            // 무채색 입력은 채도를 부스트하지 않고 모노톤으로 유지 (흑백 커버, 중립 글로우)
-            if (s < 0.06)
-            {
-                double monoL = Math.Clamp(l * 1.15, 0.38, 0.62);
-                return HslToColor(h, 0, monoL);
-            }
-
-            // 설정의 글로우 강도 프리셋에 따라 부스트 배수와 클램프 범위가 달라진다
-            bool subtle = ConfigService.Current.GlowIntensity == "subtle";
-            bool vivid = ConfigService.Current.GlowIntensity == "vivid";
-
-            double sMul = subtle ? 1.15 : vivid ? 1.70 : 1.45;
-            double sMin = subtle ? 0.30 : vivid ? 0.55 : 0.45;
-            double sMax = subtle ? 0.80 : vivid ? 1.00 : 0.98;
-            double lMul = subtle ? 1.10 : vivid ? 1.20 : 1.15;
-
-            // 원본 앨범의 색감을 최대한 유지하면서 앰비언트 느낌만 주도록 부스팅
-            double boostedS = Math.Clamp(s * sMul, sMin, sMax);
-
-            // 명도를 너무 심하게 좁은 구간으로 뭉개지 않고, 고유의 밝기를 살려줌
-            double tunedL = Math.Clamp(l * lMul, 0.35, 0.75);
-
-            return HslToColor(h, boostedS, tunedL);
-        }
-
-        private static Color GenerateShiftedColor(Color primary, double hueShiftDegrees)
-        {
-            ColorToHsl(primary, out double h, out double s, out double l);
-            double shiftedH = (h + hueShiftDegrees) % 360;
-            return HslToColor(shiftedH, Math.Max(0.78, s), Math.Clamp(l * 0.96, 0.46, 0.56));
-        }
-
-        private Color GetDominantColor(BitmapSource bitmap)
-        {
-            try
-            {
-                int targetW = Math.Min(bitmap.PixelWidth, 48);
-                int targetH = Math.Min(bitmap.PixelHeight, 48);
-                var scaled = new TransformedBitmap(bitmap, new ScaleTransform(
-                    (double)targetW / bitmap.PixelWidth,
-                    (double)targetH / bitmap.PixelHeight));
-
-                var formatConverted = new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
-                int width = formatConverted.PixelWidth;
-                int height = formatConverted.PixelHeight;
-                int stride = width * 4;
-                byte[] pixels = new byte[height * stride];
-                formatConverted.CopyPixels(pixels, stride, 0);
-
-                // 16개 Hue 버킷 (각 22.5도) 히스토그램 클러스터링
-                const int numBuckets = 16;
-                double[] bucketScores = new double[numBuckets];
-                double[] bucketSumR = new double[numBuckets];
-                double[] bucketSumG = new double[numBuckets];
-                double[] bucketSumB = new double[numBuckets];
-                double[] bucketWeights = new double[numBuckets];
-
-                double lumSum = 0;
-                int lumCount = 0;
-
-                for (int i = 0; i < pixels.Length; i += 4)
-                {
-                    byte b = pixels[i];
-                    byte g = pixels[i + 1];
-                    byte r = pixels[i + 2];
-
-                    ColorToHsl(Color.FromRgb(r, g, b), out double h, out double s, out double l);
-
-                    lumSum += l;
-                    lumCount++;
-
-                    // 유효한 유색 픽셀 판별 (채도와 명도가 적절한 픽셀)
-                    if (s >= 0.18 && l >= 0.12 && l <= 0.88)
-                    {
-                        // 채도가 높고 중간 밝기일수록 가중치 부여
-                        double weight = s * s * (1.0 - Math.Abs(l - 0.5) * 1.3);
-                        int bucket = (int)(h / (360.0 / numBuckets)) % numBuckets;
-                        if (bucket < 0) bucket = 0;
-
-                        bucketScores[bucket] += weight;
-                        bucketSumR[bucket] += r * weight;
-                        bucketSumG[bucket] += g * weight;
-                        bucketSumB[bucket] += b * weight;
-                        bucketWeights[bucket] += weight;
-                    }
-                }
-
-                // 가장 점수가 높은 지배적 색상 버킷 선정
-                int bestBucket = -1;
-                double maxScore = 0;
-                for (int b = 0; b < numBuckets; b++)
-                {
-                    if (bucketScores[b] > maxScore)
-                    {
-                        maxScore = bucketScores[b];
-                        bestBucket = b;
-                    }
-                }
-
-                if (bestBucket >= 0 && bucketWeights[bestBucket] > 0.05)
-                {
-                    // SetAmbientColor에서 EnhanceAmbientColor를 다시 적용하므로 여기서는 순수 지배색만 반환 (이중 부스팅 방지)
-                    return Color.FromRgb(
-                        (byte)Math.Clamp(bucketSumR[bestBucket] / bucketWeights[bestBucket], 0, 255),
-                        (byte)Math.Clamp(bucketSumG[bestBucket] / bucketWeights[bestBucket], 0, 255),
-                        (byte)Math.Clamp(bucketSumB[bestBucket] / bucketWeights[bestBucket], 0, 255));
-                }
-
-                // 흑백/무채색 커버: 해시 폴백 대신 커버의 실제 밝기에 맞춘 모노톤 글로우
-                if (lumCount > 0)
-                {
-                    double avgL = Math.Clamp((lumSum / lumCount) * 1.15, 0.30, 0.66);
-                    return HslToColor(0, 0, avgL);
-                }
-
-                return GenerateFallbackColor(_lastMediaKey);
-            }
-            catch
-            {
-                return GenerateFallbackColor(_lastMediaKey);
-            }
         }
 
         private async Task RetryThumbnailAsync(string expectedKey)
@@ -1631,9 +1220,6 @@ namespace TopDock
                             {
                                 ExpandedAlbumArtImage.Source = media.Thumbnail;
                                 ExpandedDefaultIcon.Visibility = Visibility.Collapsed;
-
-                                var avgColor = GetDominantColor(bmp);
-                                SetAmbientColor(avgColor);
                             }
                         });
                         return;
@@ -1713,11 +1299,24 @@ namespace TopDock
         {
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
-                // 스폰서/인트로 등 스킵 대상 구간 진입 시 자동 건너뛰기
+                // 스폰서/인트로 등 스킵 대상 구간 진입 시 자동 건너뛰기 (auto 모드 한정)
                 var skipTarget = _sponsorSkip.GetSkipTarget(currentPos, duration);
                 if (skipTarget.HasValue)
                 {
                     _ = _mediaService.TrySeekAsync(skipTarget.Value);
+                    SponsorSkipButton.Visibility = Visibility.Collapsed;
+                }
+                else if (_sponsorSkip.IsInSkipSegment(currentPos, duration))
+                {
+                    // manual 모드: 흐름은 끊지 않고 우상단에 건너뛰기 버튼만 노출
+                    if (SponsorSkipButton.Visibility != Visibility.Visible)
+                    {
+                        SponsorSkipButton.Visibility = Visibility.Visible;
+                    }
+                }
+                else
+                {
+                    SponsorSkipButton.Visibility = Visibility.Collapsed;
                 }
 
                 UpdateTimelineDisplay(currentPos, duration);
@@ -1725,6 +1324,18 @@ namespace TopDock
                 var lyricPos = _lyricsService.GetAdjustedPosition(currentPos + LyricLookahead, duration);
                 UpdateLyricsDisplay(lyricPos);
             }
+        }
+
+        private async void SponsorSkipButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_mediaService.GetExactPosition(out var pos, out var dur))
+            {
+                if (_sponsorSkip.GetManualSkipTarget(pos, dur) is { } target)
+                {
+                    await _mediaService.TrySeekAsync(target).ConfigureAwait(true);
+                }
+            }
+            SponsorSkipButton.Visibility = Visibility.Collapsed;
         }
 
         private void UpdateTimelineDisplay(TimeSpan currentPos, TimeSpan duration)
@@ -1852,10 +1463,18 @@ namespace TopDock
 
         private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_clipboardStripVisible)
-                HideClipboardStripExpanded(animateHeight: true);
-            else
-                ShowClipboardStripExpanded();
+            // 확장 노치에서도 동일한 오른쪽 패널로 접근 — 하단 스트립은 철폐됐다
+            if (_clipboardHistoryOpen)
+            {
+                HideClipboardHistoryPanel();
+                HideClipboardSideCapsule();
+            }
+            else if (_clipboardHistory.Count > 0)
+            {
+                // 캡슐이 안 떠 있으면 조용히 띄워 위치 기준점을 만든 뒤 패널을 연다
+                ShowClipboardSideCapsule("클립보드");
+                ShowClipboardHistoryPanel();
+            }
         }
 
         private void RenderClipboardHistory()
@@ -2112,8 +1731,6 @@ namespace TopDock
             TotalTimeText.Text = "0:00";
             _progressTimer.Stop();
 
-            ClearAmbientLight();
-
             if (_volumeHudTimer == null || !_volumeHudTimer.IsEnabled)
             {
                 SwitchViewMode(_isExpanded ? ViewMode.IdleExpanded : ViewMode.IdleCompact);
@@ -2227,11 +1844,27 @@ namespace TopDock
             _settingsWindow.Show();
         }
 
+        private void AssistantSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenSettings();
+        }
+
+        private void AssistantAiButton_Click(object sender, RoutedEventArgs e)
+        {
+            // 새 지시: 기록을 비우고 오브를 대기 상태로 — 텍스트 없이 초기화
+            if (_assistantBusy) return;
+            _assistant.ResetConversation();
+            ClearAssistantConversation();
+            ShowConversationOrb(Controls.OrbKind.Breathing);
+            ActivateSelfAndFocusInput();
+        }
+
         private void ApplySettings()
         {
             var cfg = ConfigService.Current;
 
             _sponsorSkip.IsEnabled = cfg.SponsorSkipEnabled;
+            _sponsorSkip.Mode = cfg.SponsorSkipMode;
 
             // AI 비서 핫키 등록 상태를 설정과 동기화
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
@@ -2246,14 +1879,9 @@ namespace TopDock
 
             UpdatePosition();
 
-            // 글로우 강도 변경을 현재 색에 즉시 반영
-            if (_mediaService.CurrentMedia?.Thumbnail is BitmapSource bmp && bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48)
+            // 배터리 표현은 설정 변경과 무관하게 최신 상태로 갱신
+            if (!HasMedia)
             {
-                SetAmbientColor(GetDominantColor(bmp));
-            }
-            else if (!HasMedia)
-            {
-                ClearAmbientLight();
                 _batteryService.ForceUpdate();
             }
 
@@ -2274,7 +1902,191 @@ namespace TopDock
 
         // ────────────────────────── AI 비서 ──────────────────────────
 
-        /// <summary>핫키/클릭으로 비서를 연다. 이미 열려 있으면 닫는다(토글).</summary>
+        /// <summary>AI 도구 호출 → 실제 기기 조작. AssistantService.ToolExecutor에 등록된다.</summary>
+        private async Task<string> ExecuteAssistantToolAsync(AiToolCall call)
+        {
+            Log.Info($"Assistant tool call: {call.Name} {call.ArgumentsJson}");
+            try
+            {
+                switch (call.Name)
+                {
+                    case "media_play_pause":
+                        {
+                            bool ok = await _mediaService.TryTogglePlayPauseAsync().ConfigureAwait(true);
+                            return ok ? "재생/일시정지 토글 성공" : "제어할 미디어 세션이 없다";
+                        }
+                    case "media_next":
+                        return await _mediaService.TrySkipNextAsync().ConfigureAwait(true)
+                            ? "다음 곡으로 넘어갔다" : "제어할 미디어 세션이 없다";
+                    case "media_previous":
+                        return await _mediaService.TrySkipPreviousAsync().ConfigureAwait(true)
+                            ? "이전 곡으로 돌아갔다" : "제어할 미디어 세션이 없다";
+                    case "set_volume":
+                        {
+                            using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(call.ArgumentsJson) ? "{}" : call.ArgumentsJson);
+                            if (!doc.RootElement.TryGetProperty("volume", out var v) || !v.TryGetInt32(out int vol))
+                            {
+                                return "volume 인자가 올바르지 않다";
+                            }
+                            int clamped = Math.Clamp(vol, 0, 100);
+                            bool muted = false;
+                            float delta = (clamped / 100f) - _audioService.GetCurrentVolume(out muted) / 100f;
+                            _audioService.StepVolume(delta, out muted);
+                            return $"볼륨을 {clamped}%로 설정했다";
+                        }
+                    case "open_app":
+                        {
+                            string app = GetStringArg(call.ArgumentsJson, "app");
+                            if (string.IsNullOrWhiteSpace(app)) return "app 인자가 비었다";
+                            bool ok = LaunchApp(app);
+                            return ok ? $"{app} 실행을 시작했다" : $"{app}을(를) 찾지 못했다";
+                        }
+                    case "open_url":
+                        {
+                            string url = GetStringArg(call.ArgumentsJson, "url");
+                            string browser = GetStringArg(call.ArgumentsJson, "browser");
+                            if (string.IsNullOrWhiteSpace(url)) return "url 인자가 비었다";
+                            OpenUrl(url, browser);
+                            return string.IsNullOrWhiteSpace(browser)
+                                ? $"{url}을(를) 기본 브라우저로 열었다"
+                                : $"{browser}에서 {url}을(를) 열었다";
+                        }
+                    case "play_youtube":
+                        {
+                            string query = GetStringArg(call.ArgumentsJson, "query");
+                            string browser = GetStringArg(call.ArgumentsJson, "browser");
+                            if (string.IsNullOrWhiteSpace(query)) return "query 인자가 비었다";
+                            string target = await ResolveYouTubeUrlAsync(query).ConfigureAwait(true);
+                            OpenUrl(target, browser);
+                            return $"유튜브에서 '{query}'을(를) 열었다: {target}";
+                        }
+                    default:
+                        return $"알 수 없는 도구: {call.Name}";
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Assistant tool execution failed", ex);
+                return $"도구 실행 중 오류: {ex.Message}";
+            }
+        }
+
+        private static string GetStringArg(string json, string key)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+                if (doc.RootElement.TryGetProperty(key, out var el) && el.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    return el.GetString() ?? string.Empty;
+                }
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        /// <summary>앱 이름 → 실행 파일로 실행. 잘 알려진 앱 별칭을 우선하고, 실패 시 shell에서 시도한다.</summary>
+        private static bool LaunchApp(string name)
+        {
+            string key = name.Trim().ToLowerInvariant().Replace(" ", "");
+            string? exe = key switch
+            {
+                "brave" or "브레이브" => "brave",
+                "chrome" or "크롬" or "구글크롬" => "chrome",
+                "edge" or "엣지" => "msedge",
+                "firefox" or "파이어폭스" => "firefox",
+                "notepad" or "메모장" => "notepad",
+                "calc" or "calculator" or "계산기" => "calc",
+                "spotify" or "스포티파이" => "spotify",
+                "discord" or "디스코드" => "discord",
+                "explorer" or "파일탐색기" => "explorer",
+                "steam" or "스팀" => "steam",
+                _ => null,
+            };
+            try
+            {
+                if (exe != null)
+                {
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = exe,
+                        UseShellExecute = true,
+                    });
+                    return true;
+                }
+                // 별칭에 없으면 이름 그대로 실행 시도 (PATH/앱 실행 별칭 활용)
+                using var p2 = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = name.Trim(),
+                    UseShellExecute = true,
+                });
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>URL 열기. 브라우저 지정 시 그 앱으로, 아니면 기본 브라우저로 연다.</summary>
+        private static void OpenUrl(string url, string? browser)
+        {
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                url = "https://" + url;
+            }
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(browser))
+                {
+                    string exe = browser.Trim().ToLowerInvariant() switch
+                    {
+                        "brave" or "브레이브" => "brave",
+                        "chrome" or "크롬" => "chrome",
+                        "edge" or "엣지" => "msedge",
+                        "firefox" or "파이어폭스" => "firefox",
+                        _ => string.Empty,
+                    };
+                    if (exe.Length > 0)
+                    {
+                        using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = exe,
+                            Arguments = $"\"{url}\"",
+                            UseShellExecute = true,
+                        });
+                        return;
+                    }
+                }
+            }
+            catch { }
+
+            // 폴백: 시스템 기본 브라우저
+            using var p2 = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true,
+            });
+        }
+
+        /// <summary>YouTube 검색(키 있으면 API, 없으면 HTML)으로 1위 영상 URL을 얻는다. 실패 시 검색 결과 페이지.</summary>
+        private async Task<string> ResolveYouTubeUrlAsync(string query)
+        {
+            try
+            {
+                string? videoId = await _youTubeSearch.SearchVideoIdAsync(query).ConfigureAwait(true);
+                if (!string.IsNullOrEmpty(videoId))
+                {
+                    return $"https://www.youtube.com/watch?v={videoId}";
+                }
+            }
+            catch { }
+            return "https://www.youtube.com/results?search_query=" + Uri.EscapeDataString(query);
+        }
+
+        /// <summary>핫키/버튼으로 비서를 연다. 이미 열려 있으면 닫는다(토글).</summary>
         private void OpenAssistant()
         {
             if (!ConfigService.Current.AssistantEnabled)
@@ -2294,17 +2106,13 @@ namespace TopDock
             }
 
             _isExpanded = true;
-            AssistantStatusText.Text = "무엇이든 물어보세요";
+            // AI 탭에서는 하단 클립보드 스트립이 대화와 겹치므로 항상 닫는다
+            _clipboardStripVisible = false;
+            ClipboardStripPanel.Visibility = Visibility.Collapsed;
             SwitchViewMode(ViewMode.Assistant);
-            SetAssistantGlow();
-            ConversationFace.SetState(Controls.AiFace.FaceState.Alert);
 
-            // 첫 열림: 상황을 보고 먼저 말을 건다 (능동성)
-            if (_assistant.GetHistorySnapshot().Count == 0)
-            {
-                string greeting = BuildProactiveGreeting();
-                AppendAssistantBubble(greeting, isUser: false);
-            }
+            // 지시 콘솔: 대기 오브(호흡)가 비서 그 자체 — 인사 말풍선 없음
+            ShowConversationOrb(Controls.OrbKind.Breathing);
 
             // 스위치 애니메이션 이후 포커스 (노치가 Topmost 투명 오버레이라 스스로 활성화 필요)
             ActivateSelfAndFocusInput();
@@ -2314,10 +2122,6 @@ namespace TopDock
         {
             AssistantInputBox.Clear();
             SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
-
-            // _currentViewMode가 이미 바뀐 뒤 복원해야 미디어 글로우가 살아난다
-            StopAssistantSwirl();
-            RestoreGlowAfterAssistant();
         }
 
         private void ActivateSelfAndFocusInput()
@@ -2357,16 +2161,8 @@ namespace TopDock
             _assistantCts = new CancellationTokenSource();
 
             AssistantInputBox.Clear();
-            AssistantInputPlaceholder.Visibility = Visibility.Collapsed;
-            AssistantStatusText.Text = "생각 중…";
-            ConversationFace.SetState(Controls.AiFace.FaceState.Thinking);
-            ConversationFace.StartThinkingWobble();
-
-            // 질문 bubble
-            AppendAssistantBubble(userMessage, isUser: true);
-
-            // 답변 bubble (스트리밍 대상)
-            _assistantAnswerBlock = AppendAssistantBubble(string.Empty, isUser: false);
+            AssistantLatestResponseText.Text = string.Empty; // 최신 지시 결과만 보여준다
+            ShowConversationOrb(Controls.OrbKind.Working);   // 사고 중
 
             UpdateAssistantContext();
             Log.Info($"Assistant query: {userMessage}");
@@ -2376,20 +2172,14 @@ namespace TopDock
             {
                 if (firstDeltaSeen) return;
                 firstDeltaSeen = true;
-                ConversationFace.StopThinkingWobble();
-                ConversationFace.SetState(Controls.AiFace.FaceState.Talking);
+                ShowConversationOrb(Controls.OrbKind.Composing); // 응답 스트리밍 중
             }
 
             try
             {
-                // 스트리밍 시작을 감지해 표정을 '말하는 중'으로 전환
                 void DeltaProxy(string d)
                 {
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        OnFirstDelta();
-                        AssistantStatusText.Text = string.Empty;
-                    }));
+                    Dispatcher.BeginInvoke(new Action(OnFirstDelta));
                     Assistant_DeltaReceived(d);
                 }
 
@@ -2404,11 +2194,12 @@ namespace TopDock
                     _assistant.DeltaReceived -= DeltaProxy;
                 }
                 Log.Info($"Assistant answer length: {answer.Length}");
-                if (_assistantAnswerBlock != null && string.IsNullOrEmpty(_assistantAnswerBlock.Text))
+                // 빈 응답 판정은 반드시 완성된 문자열로 — UI 텍스트로 판정하면 델타가
+                // BeginInvoke로 늦게 붙는 경쟁에서 "(빈 응답)"이 실제 답변 앞에 끼어든다 (실측 버그)
+                if (string.IsNullOrWhiteSpace(answer))
                 {
-                    _assistantAnswerBlock.Text = "(빈 응답)";
+                    AssistantLatestResponseText.Text = "(빈 응답)";
                 }
-                AssistantStatusText.Text = string.Empty;
             }
             catch (OperationCanceledException)
             {
@@ -2417,34 +2208,26 @@ namespace TopDock
             catch (AiException ex)
             {
                 Log.Error("Assistant request failed", ex);
-                if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ " + ex.Message;
-                AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
-                ConversationFace.SetState(Controls.AiFace.FaceState.Sad);
+                AssistantLatestResponseText.Text = "⚠ " + ex.Message;
             }
             catch (Exception ex)
             {
                 Log.Error("Assistant unexpected error", ex);
-                if (_assistantAnswerBlock != null) _assistantAnswerBlock.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
-                AssistantStatusText.Text = "오류 — 다시 시도해 주세요";
-                ConversationFace.SetState(Controls.AiFace.FaceState.Sad);
+                AssistantLatestResponseText.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
             }
             finally
             {
                 _assistantBusy = false;
-                ConversationFace.StopThinkingWobble();
-                ConversationFace.SetState(Controls.AiFace.FaceState.Alert);
+                ShowConversationOrb(Controls.OrbKind.Breathing); // 대기 복귀
             }
         }
 
         private void Assistant_DeltaReceived(string delta)
         {
-            // 네트워크 스레드 → UI 스레드
+            // 네트워크 스레드 → UI 스레드: 최신 응답 흐름에 조각을 붙인다
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_assistantAnswerBlock == null) return;
-                _assistantAnswerBlock.Inlines.Add(delta);
-
-                // 말줄임 없이 부드러운 자동 스크롤
+                AssistantLatestResponseText.Inlines.Add(delta);
                 AssistantScroll.ScrollToEnd();
             }));
         }
@@ -2474,10 +2257,6 @@ namespace TopDock
                 }
             }
 
-            string batteryText = _lastBatteryPercent >= 0
-                ? $"{_lastBatteryPercent * 100:0}%" + (_lastBatteryCharging ? " (충전 중)" : "")
-                : string.Empty;
-
             string clipboardText = string.Empty;
             if (_clipboardHistory.Count > 0)
             {
@@ -2489,75 +2268,12 @@ namespace TopDock
                 NowText: DateTime.Now.ToString("yyyy-MM-dd dddd HH:mm"),
                 MediaText: mediaText,
                 LyricText: lyricText,
-                BatteryText: batteryText,
                 ClipboardText: clipboardText));
-        }
-
-        private TextBlock AppendAssistantBubble(string text, bool isUser)
-        {
-            var border = new Border
-            {
-                Background = new SolidColorBrush(isUser ? Color.FromArgb(0x28, 0x0A, 0x84, 0xFF) : Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 6, 10, 6),
-                Margin = new Thickness(0, 3, 0, 3),
-                HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-                MaxWidth = 420,
-            };
-            var block = new TextBlock
-            {
-                Text = text,
-                Foreground = new SolidColorBrush(Colors.White),
-                FontSize = 12.5,
-                FontWeight = isUser ? FontWeights.SemiBold : FontWeights.Medium,
-                TextWrapping = TextWrapping.Wrap,
-                FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI, -apple-system"),
-            };
-            border.Child = block;
-            AssistantConversationPanel.Children.Add(border);
-            AssistantScroll.ScrollToEnd();
-            return block;
         }
 
         private void Assistant_NotchClick(object sender, MouseButtonEventArgs e)
         {
-            // 어느 뷰든 노치 본체 클릭 시 비서 호출 (비서 화면 제외)
-            if (_currentViewMode != ViewMode.Assistant)
-            {
-                OpenAssistant();
-            }
-        }
-
-        /// <summary>비서가 먼저 상황을 인지하고 인사한다.</summary>
-        private string BuildProactiveGreeting()
-        {
-            var media = _mediaService.CurrentMedia;
-            string timePart = DateTime.Now.Hour switch
-            {
-                >= 23 or < 6 => "이 늦은 시간에",
-                < 9 => "좋은 아침!",
-                < 12 => "안녕!",
-                < 14 => "점심 먹었어?",
-                < 18 => "오후 잘 보내고 있어?",
-                < 22 => "저녁이야",
-                _ => "안녕!"
-            };
-
-            string? context = null;
-            if (media != null && media.IsPlaying && !string.IsNullOrWhiteSpace(media.Title) && media.Title != "재생 중인 미디어 없음")
-            {
-                context = $"\"{TruncateStatus(media.Title)}\" 듣고 있구나. 뭐 궁금한 거 있어?";
-            }
-            else if (_lastBatteryPercent >= 0 && _lastBatteryPercent <= 0.20f && !_lastBatteryCharging)
-            {
-                context = "배터리가 20% 밑이야. 충전기 연결했어?";
-            }
-            else if (_clipboardHistory.Count > 0 && !_clipboardHistory[0].IsImage && _clipboardHistory[0].Text.Length > 40)
-            {
-                context = "아까 복사한 긴 텍스트, 요약해줄까?";
-            }
-
-            return context == null ? $"{timePart} 나 여기 있어. 뭐 도와줄까?" : $"{timePart} {context}";
+            // 1·2번 피드백: 노치 클릭 → AI 호출은 제거됐다. AI는 핫키(Ctrl+Shift+Space)로만 연다.
         }
 
         private void AssistantCloseButton_Click(object sender, RoutedEventArgs e)
@@ -2572,9 +2288,55 @@ namespace TopDock
 
         private void ClearAssistantConversation()
         {
-            AssistantConversationPanel.Children.Clear();
-            _assistantAnswerBlock = null;
-            AssistantInputPlaceholder.Visibility = Visibility.Visible;
+            AssistantLatestResponseText.Text = string.Empty;
+            AssistantScroll.ScrollToHome();
+        }
+
+        // 상태 텍스트 광택 스윕: 밝은 빛이 글자 뒤를 왼→오른쪽으로 스치는 원작 디테일.
+        // XAML EventTrigger는 TextBlock.Triggers에 못 쓰므로 코드에서 구동한다.
+        private void StartStatusSheen()
+        {
+            if (StatusSheenBright == null) return;
+            var anim = new DoubleAnimation
+            {
+                From = 0,
+                To = 1,
+                Duration = new Duration(TimeSpan.FromSeconds(2.4)),
+                RepeatBehavior = RepeatBehavior.Forever,
+            };
+            StatusSheenBright.BeginAnimation(GradientStop.OffsetProperty, anim);
+        }
+
+        // ── Thinking Orbs 상태 전환 ──
+        // 대기=Breathing(상단 소형) / 사고=Working(중앙 대형, 입력 불가 시각화) / 응답=Composing(상단 소형).
+        // CenterOrb는 지시 직후 응답이 오기 전까지 중앙에서 크게 도는 전용 오브다.
+
+        private void ShowConversationOrb(Controls.OrbKind kind)
+        {
+            ConversationOrb.Kind = kind;
+            bool thinking = kind == Controls.OrbKind.Working;
+            // 사고 중엔 중앙 대형 오브만 — 헤더 오브와 겹쳐 '구체 2개'로 보이지 않게 한다
+            ConversationOrb.Visibility = thinking ? Visibility.Collapsed : Visibility.Visible;
+            CenterOrb.Kind = kind;
+            CenterOrb.Visibility = thinking ? Visibility.Visible : Visibility.Collapsed;
+            AssistantLatestResponseText.Visibility = thinking ? Visibility.Collapsed : Visibility.Visible;
+
+            // border-beam: 입력창은 응답 스트리밍 중에만 광선이 흐른다.
+            // 노치 beam은 엠비언트(Assistant 글로우)가 관리하므로 여기서 건드리지 않는다.
+            InputBeam.Active = kind == Controls.OrbKind.Composing;
+
+            AssistantStatusText.Text = kind switch
+            {
+                Controls.OrbKind.Working => "생각 중...",
+                Controls.OrbKind.Composing => "응답 중...",
+                Controls.OrbKind.Searching => "검색 중...",
+                Controls.OrbKind.Solving => "풀이 중...",
+                Controls.OrbKind.Listening => "대화 중...",
+                Controls.OrbKind.Connecting => "연결 중...",
+                Controls.OrbKind.Weaving => "정리 중...",
+                Controls.OrbKind.Shaping => "준비 중...",
+                _ => "대기 중...",
+            };
         }
 
         private void MainWindow_Closed(object? sender, EventArgs e)
@@ -2584,7 +2346,6 @@ namespace TopDock
             _volumeHudTimer?.Stop();
             _emptyMediaDebounceTimer?.Stop();
             StopEqualizerAnimation();
-            StopAmbientBreathAnimation();
 
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)
