@@ -44,13 +44,18 @@ namespace TopDock
                         ExpandedArtistText.Text = displayArtist;
                     }
 
-                    string searchArtist = displayArtist == "YouTube" ? string.Empty : displayArtist;
-                    await LoadLyricsAsync(displayTitle, searchArtist);
-
+                    // 뷰와 폭은 제목만으로 정해진다 — 가사를 기다리지 않는다. 예전에는 여기서
+                    // await LoadLyricsAsync를 하고 그 뒤에 뷰를 바꿔서, 후보 질의가 전부
+                    // 끝날 때까지(최악 수십 초) 이전 크기로 남았다.
+                    // 가사를 찾는 동안에도 자리는 미리 내준다 — 나중에 폭이 자라면 그게 더 눈에 띈다.
+                    _lyricsPending = true;
                     if (_volumeHudTimer == null || !_volumeHudTimer.IsEnabled)
                     {
                         SwitchViewMode(_isExpanded ? ViewMode.MediaExpanded : ViewMode.MediaCompact);
                     }
+
+                    string searchArtist = displayArtist == "YouTube" ? string.Empty : displayArtist;
+                    _ = LoadLyricsAsync(displayTitle, searchArtist);
                 }
 
                 bool isValidThumbnail = false;
@@ -191,13 +196,25 @@ namespace TopDock
 
         private static readonly TimeSpan LyricLookahead = TimeSpan.FromMilliseconds(500);
 
+        /// <summary>현재 곡 가사의 음원 길이(LRCLIB 기준) — 뮤직비디오 인트로 보정에 쓰인다.</summary>
+        private TimeSpan? _lyricSourceDuration;
+
+        /// <summary>이 곡의 가사를 아직 찾는 중인가.</summary>
+        private bool _lyricsPending;
+
+        /// <summary>
+        /// 가사를 놓을 자리를 지금 내줄지. 찾는 중에는 낙관적으로 내준다 — 그래야 가사가
+        /// 도착했을 때 노치 폭이 뒤늦게 자라는 일이 없다. 찾아보니 없다고 밝혀지면 그때 한 번 줄인다.
+        /// </summary>
+        private bool LyricsExpected => _syncedLyrics.Count > 0 || _lyricsPending;
+
         private void ProgressTimer_Tick(object? sender, EventArgs e)
         {
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
                 UpdateTimelineDisplay(currentPos, duration);
                 // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤
-                var lyricPos = _lyricsService.GetAdjustedPosition(currentPos + LyricLookahead, duration);
+                var lyricPos = LyricsService.AdjustForSourceOffset(currentPos + LyricLookahead, duration, _lyricSourceDuration);
                 UpdateLyricsDisplay(lyricPos);
             }
         }
@@ -221,30 +238,42 @@ namespace TopDock
             }
         }
 
+        /// <summary>
+        /// 가사를 받아 표시를 갱신한다. 뷰 전환과는 무관하게 뒤에서 돈다 — 예전에는 곡이 바뀔 때
+        /// 이걸 기다린 뒤에 뷰를 바꿔서, 검색이 끝날 때까지(최악 수십 초) 이전 곡의 크기로 남아 있었다.
+        /// </summary>
         private async Task LoadLyricsAsync(string rawTitle, string rawArtist)
         {
-            _syncedLyrics.Clear();
-            _hasLyrics = false;
-            SetLyricsVisibility(false);
+            string requestKey = _lastMediaKey;
 
-            var lyrics = await _lyricsService.GetLyricsAsync(rawTitle, rawArtist);
-            if (lyrics != null && lyrics.Count > 0)
+            _syncedLyrics.Clear();
+            _lyricSourceDuration = null;
+            _lyricsPending = true;
+            SetLyricsVisibility(false);
+            RefreshCompactWidth();
+
+            // 이 영상의 길이 — 아티스트를 못 믿을 때(YouTube 업로더명) 같은 제목의 다른 곡을 가려내는 근거가 된다
+            _mediaService.GetExactPosition(out _, out var mediaDuration);
+            var result = await _lyricsService.GetLyricsAsync(rawTitle, rawArtist, mediaDuration);
+
+            // 기다리는 사이에 곡이 바뀌었으면 이 결과는 버린다
+            if (_lastMediaKey != requestKey) return;
+
+            _lyricsPending = false;
+
+            if (result != null && result.Lines.Count > 0)
             {
-                _syncedLyrics = lyrics;
-                _hasLyrics = true;
+                _syncedLyrics = new List<LyricLine>(result.Lines);
+                _lyricSourceDuration = result.SourceDuration;
                 SetLyricsVisibility(true);
             }
-            else
+            else if (_currentViewMode == ViewMode.MediaExpanded)
             {
-                _syncedLyrics.Clear();
-                _hasLyrics = false;
-                SetLyricsVisibility(false);
-            }
-
-            if (_isExpanded && (_volumeHudTimer == null || !_volumeHudTimer.IsEnabled))
-            {
+                // 가사가 없다고 밝혀졌으면 미리 내준 자리를 거둬들인다 (276폭으로 줄고 내용은 가운데로)
                 SwitchViewMode(ViewMode.MediaExpanded);
             }
+
+            RefreshCompactWidth();
         }
 
         private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
@@ -252,22 +281,27 @@ namespace TopDock
             ToggleClipboardHistory();
         }
 
+        /// <summary>가사 영역의 내용을 보일지. 자리(폭·열)는 ApplyLyricsLayout이 따로 맡는다.</summary>
         private void SetLyricsVisibility(bool visible)
         {
-            if (visible)
-            {
-                LyricsDivider.Visibility = Visibility.Visible;
-                LyricsContainer.Visibility = Visibility.Visible;
+            LyricsDivider.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            LyricsContainer.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
 
+        /// <summary>
+        /// 확장 뷰에서 가사 자리를 내줄지 정한다. 자리를 비울 때는 내용을 가운데로 모은다 —
+        /// 그러지 않으면 276폭에 왼쪽으로 몰린 모습이 된다.
+        /// </summary>
+        private void ApplyLyricsLayout(bool reserve)
+        {
+            if (reserve)
+            {
                 MediaExpandedView.HorizontalAlignment = HorizontalAlignment.Stretch;
                 LyricsDividerCol.Width = GridLength.Auto;
                 LyricsCol.Width = new GridLength(1, GridUnitType.Star);
             }
             else
             {
-                LyricsDivider.Visibility = Visibility.Collapsed;
-                LyricsContainer.Visibility = Visibility.Collapsed;
-
                 MediaExpandedView.HorizontalAlignment = HorizontalAlignment.Center;
                 LyricsDividerCol.Width = new GridLength(0);
                 LyricsCol.Width = new GridLength(0);
@@ -309,18 +343,6 @@ namespace TopDock
                     AnimateLyricLine(CurrentLyricText);
                 }
 
-                if (!_isExpanded && _currentViewMode == ViewMode.MediaCompact)
-                {
-                    double newWidth = CalculateCompactWidth();
-                    if (Math.Abs(NotchBorder.Width - newWidth) > 5)
-                    {
-                        var animDuration = TimeSpan.FromMilliseconds(200);
-                        var animEase = new QuadraticEase();
-                        DoubleAnimation widthAnim = new DoubleAnimation { To = newWidth, Duration = animDuration, EasingFunction = animEase };
-                        NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
-                        UpdateGlowDimensions(newWidth, 38, animDuration, animEase);
-                    }
-                }
             }
             else
             {
@@ -329,6 +351,27 @@ namespace TopDock
                 CurrentLyricText.Text = "...";
                 NextLyricText.Text = _syncedLyrics.Count > 0 ? _syncedLyrics[0].Text : string.Empty;
             }
+
+            // 가사가 도착했거나 없다고 밝혀졌을 때 컴팩트 노치 폭을 맞춘다
+            RefreshCompactWidth();
+        }
+
+        /// <summary>
+        /// 컴팩트 노치 폭을 지금 상태에 맞춘다. 가사 줄이 바뀔 때마다가 아니라
+        /// 가사 자리가 늘거나 줄 때만 움직인다(가사를 못 찾았을 때 등).
+        /// </summary>
+        private void RefreshCompactWidth()
+        {
+            if (_isExpanded || _currentViewMode != ViewMode.MediaCompact) return;
+
+            double target = CalculateCompactWidth();
+            if (Math.Abs(NotchBorder.Width - target) <= 5) return;
+
+            var duration = new Duration(TimeSpan.FromMilliseconds(200));
+            var ease = new QuadraticEase();
+            NotchBorder.BeginAnimation(Border.WidthProperty,
+                new DoubleAnimation { To = target, Duration = duration, EasingFunction = ease });
+            UpdateGlowDimensions(target, 38, duration, ease);
         }
 
         private void AnimateLyricLine(TextBlock text)
@@ -396,7 +439,8 @@ namespace TopDock
             StopEqualizerAnimation();
 
             _syncedLyrics.Clear();
-            _hasLyrics = false;
+            _lyricSourceDuration = null;
+            _lyricsPending = false;
             SetLyricsVisibility(false);
 
             ExpandedProgressBar.Value = 0;

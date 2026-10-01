@@ -173,13 +173,18 @@ namespace TopDock
             _radiusTimer = null;
         }
 
+        /// <summary>컴팩트 노치에서 가사 한 줄에 내주는 최대 폭.</summary>
+        private const double CompactLyricBudget = 210;
+
         private double CalculateCompactWidth()
         {
             string title = CompactTitleText.Text ?? "";
-            string lyric = CompactLyricText.Text ?? "";
 
             double titleWidth = MeasureTextWidth(title, 13.5, FontWeights.SemiBold);
-            double lyricWidth = MeasureTextWidth(lyric, 13, FontWeights.Medium);
+
+            // 가사는 실제 길이가 아니라 고정 예산만 쓴다. 예전에는 쥴 길이를 그대로 더해서
+            // 가사가 한 줄 바뀔 때마다 노치 폭이 200ms 애니메이션으로 흔들렸다.
+            double lyricWidth = LyricsExpected ? CompactLyricBudget : 0;
 
             // 35 = 좌우 여백 + 이퀄라이저 폭, 20 = 그 오른쪽 배터리 점 자리.
             // 점은 대부분 숨겨져 있지만 자리는 항상 비워 둔다 — 재생 중에 충전을 시작해도
@@ -240,13 +245,14 @@ namespace TopDock
                     activeView = MediaCompactView;
                     break;
                 case ViewMode.MediaExpanded:
-                    targetWidth = _hasLyrics ? 620 : 276;
+                    // 가사가 있으면 가사 자리까지, 없으면 앨범아트+컨트롤 폭만
+                    targetWidth = LyricsExpected ? 620 : 276;
                     targetHeight = 190;
                     targetRadius = 36;
                     activeView = MediaExpandedView;
                     break;
                 case ViewMode.VolumeHud:
-                    targetWidth = _isExpanded ? (_hasLyrics ? 620 : 276) : 240;
+                    targetWidth = _isExpanded ? (LyricsExpected ? 620 : 276) : 240;
                     targetHeight = _isExpanded ? 190 : 38;
                     targetRadius = _isExpanded ? 36 : 19;
                     activeView = _isExpanded ? MediaExpandedView : VolumeHudView;
@@ -293,6 +299,10 @@ namespace TopDock
                 VolumeBarTransform.BeginAnimation(TranslateTransform.YProperty, null);
                 VolumeBarTransform.Y = -10;
             }
+
+            // 가사 자리는 폭과 함께 결정된다 — 좌우 정렬과 열 너비를 먼저 맞춰야
+            // 페이드인 순간에 내용이 다른 자리에 앉았다가 건너뛰지 않는다
+            ApplyLyricsLayout(LyricsExpected);
 
             SetViewActive(activeView, duration, ease);
 

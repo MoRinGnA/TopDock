@@ -11,19 +11,41 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using TopDock.Models;
+
 namespace TopDock.Services
 {
+    /// <summary>
+    /// 한 곡의 가사 조회 결과.
+    /// 서비스가 곡별 상태(예: 음원 길이)를 들고 있지 않도록 필요한 값을 전부 여기 담아 돌려준다 —
+    /// 예전에는 _lrcDuration 하나를 인스턴스에 두고 썼는데, 앞선 조회가 살아남아 값을 덮어쓰면
+    /// 엉뚱한 보정이 적용됐다.
+    /// </summary>
+    public sealed record LyricsResult(
+        IReadOnlyList<LyricLine> Lines,
+        TimeSpan? SourceDuration,
+        string MatchedTrack,
+        string MatchedArtist);
 
     public class LyricsService : IDisposable
     {
+        // 캐시 스키마 버전. 올리면 기존 캐시 파일은 전부 버려진다 —
+        // 매칭 로직을 고쳐도 예전에 잘못 저장된 결과가 계속 쓰이던 문제를 막는다.
+        private const int CacheSchemaVersion = 2;
+
+        // 이 점수 아래는 "다른 곡"으로 본다
+        private const double MinMatchScore = 0.6;
+
+        // 길이가 이만큼 넘게 차이 나면 다른 판(연장판·루프 영상)이다 — 제목이 같아도 받지 않는다
+        private static readonly TimeSpan DurationTolerance = TimeSpan.FromSeconds(40);
+
+        // 사실상 같은 녹음으로 볼 수 있는 차이 (뮤직비디오 인트로는 여기에 안 들어온다)
+        private static readonly TimeSpan DurationTight = TimeSpan.FromSeconds(5);
+
         private readonly HttpClient _httpClient;
         private CancellationTokenSource? _currentCts;
-        private double _lrcDuration = 0; // LRCLIB에서 받은 음원 길이(초)
-
-        private sealed record LyricsEntry(List<LyricLine> Lines, double Duration);
 
         // 메모리 캐시 (세션 동안 유효)
-        private readonly ConcurrentDictionary<string, LyricsEntry> _memoryCache = new();
+        private readonly ConcurrentDictionary<string, LyricsResult> _memoryCache = new();
 
         // 디스크 캐시 (%APPDATA%\TopDock\LyricsCache) — 오프라인/재생 시 즉시 표시용 영구 캐시
         private static readonly string DiskCacheDir = Path.Combine(
@@ -52,23 +74,20 @@ namespace TopDock.Services
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TopDock/1.0 (https://github.com/TopDock)");
         }
 
-        public async Task<List<LyricLine>?> GetLyricsAsync(string rawTitle, string rawArtist)
+        /// <summary>
+        /// 곡 하나의 가사를 찾는다. 못 찾으면 null.
+        /// mediaDuration은 지금 재생 중인 영상의 길이 — YouTube에서는 업로더(채널명)가 아티스트로 오기 때문에
+        /// 아티스트를 못 믿을 때 "제목이 같고 길이도 같은가"를 대신 확인하는 근거로 쓴다.
+        /// </summary>
+        public async Task<LyricsResult?> GetLyricsAsync(string rawTitle, string rawArtist, TimeSpan? mediaDuration = null)
         {
             if (string.IsNullOrWhiteSpace(rawTitle) || rawTitle == "재생 중인 미디어 없음")
                 return null;
 
-            _lrcDuration = 0;
-
             var (cleanTitle, cleanArtist, subTitle, subArtist) = ParseTitleAndArtistFull(rawTitle, rawArtist);
-
             string cacheKey = $"{cleanArtist.ToLowerInvariant()}:::{cleanTitle.ToLowerInvariant()}";
 
-            // 캐시 히트 시에도 duration을 함께 복원해야 오프셋 보정(GetAdjustedPosition)이 유지된다
-            if (TryGetCached(cacheKey, out var cached))
-            {
-                _lrcDuration = cached.Duration;
-                return cached.Lines;
-            }
+            if (TryGetCached(cacheKey, out var cached)) return cached;
 
             _currentCts?.Cancel();
             _currentCts = new CancellationTokenSource();
@@ -76,115 +95,264 @@ namespace TopDock.Services
 
             try
             {
-                // Build multi-tier search queries designed specifically to match LRCLIB's Korean/English catalog
-                var candidates = new List<string>();
-
-                void AddCandidate(string? q)
-                {
-                    if (!string.IsNullOrWhiteSpace(q))
-                    {
-                        string trimmed = q.Trim();
-                        if (trimmed.Length >= 2 && !candidates.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
-                        {
-                            candidates.Add(trimmed);
-                        }
-                    }
-                }
-
-                // 1. "Artist Title" variations
-                if (!string.IsNullOrEmpty(cleanArtist) && !string.IsNullOrEmpty(cleanTitle))
-                {
-                    AddCandidate($"{cleanArtist} {cleanTitle}");
-                }
-                if (!string.IsNullOrEmpty(cleanArtist) && !string.IsNullOrEmpty(subTitle))
-                {
-                    AddCandidate($"{cleanArtist} {subTitle}");
-                }
-                if (!string.IsNullOrEmpty(subArtist) && !string.IsNullOrEmpty(cleanTitle))
-                {
-                    AddCandidate($"{subArtist} {cleanTitle}");
-                }
-                if (!string.IsNullOrEmpty(subArtist) && !string.IsNullOrEmpty(subTitle))
-                {
-                    AddCandidate($"{subArtist} {subTitle}");
-                }
-
-                // 2. Title combined variations
-                if (!string.IsNullOrEmpty(cleanTitle) && !string.IsNullOrEmpty(subTitle))
-                {
-                    AddCandidate($"{cleanTitle} {subTitle}");
-                }
-
-                // 3. Title-only variations (CRITICAL for Korean songs where LRCLIB has English artist name!)
-                AddCandidate(cleanTitle);
-                AddCandidate(subTitle);
-
-                // 4. Raw title cleaned fallback
-                string rawCleaned = Regex.Replace(rawTitle, @"(?i)\[[^\]]*\]|\b(MV|M/V|Official|Music Video|Audio|Lyrics|가사)\b", " ").Trim();
-                rawCleaned = Regex.Replace(rawCleaned, @"\s+", " ").Trim();
-                AddCandidate(rawCleaned);
-
-                foreach (var query in candidates)
+                Candidate? best = null;
+                foreach (string query in BuildSearchQueries(cleanTitle, cleanArtist, subTitle, subArtist, rawTitle))
                 {
                     if (ct.IsCancellationRequested) break;
 
-                    string searchUrl = $"https://lrclib.net/api/search?q={Uri.EscapeDataString(query)}";
-                    var entry = await FetchAndParseAsync(searchUrl, ct);
-                    if (entry != null)
-                    {
-                        StoreInCache(cacheKey, entry);
-                        _lrcDuration = entry.Duration;
-                        return entry.Lines;
-                    }
+                    string url = $"https://lrclib.net/api/search?q={Uri.EscapeDataString(query)}";
+                    var (candidate, resultCount) = await SearchAsync(url, cleanTitle, cleanArtist, mediaDuration, ct).ConfigureAwait(false);
+
+                    Log.Info($"Lyrics search \"{query}\" → {resultCount}건, 최고점 " +
+                             (candidate == null ? "없음" : candidate.Score.ToString("F2", CultureInfo.InvariantCulture)));
+
+                    if (candidate != null && (best == null || candidate.Score > best.Score)) best = candidate;
+
+                    // 완전 일치를 찾았으면 더 뒤질 이유가 없다 (예전에는 후보 8개를 끝까지 순차로 쐈다)
+                    if (best is { Score: >= 0.999 }) break;
                 }
 
-                // Final exact match attempt
-                if (!string.IsNullOrEmpty(cleanArtist) && !string.IsNullOrEmpty(cleanTitle) && !ct.IsCancellationRequested)
+                if (best == null)
                 {
-                    string targetUrl = $"https://lrclib.net/api/search?track_name={Uri.EscapeDataString(cleanTitle)}&artist_name={Uri.EscapeDataString(cleanArtist)}";
-                    var entry = await FetchAndParseAsync(targetUrl, ct);
-                    if (entry != null)
-                    {
-                        StoreInCache(cacheKey, entry);
-                        _lrcDuration = entry.Duration;
-                        return entry.Lines;
-                    }
+                    Log.Info($"Lyrics not found: {cleanArtist} - {cleanTitle}");
+                    return null;
                 }
+
+                var result = new LyricsResult(best.Lines, best.Duration, best.Track, best.Artist);
+                StoreInCache(cacheKey, result);
+                Log.Info($"Lyrics matched: {best.Artist} - {best.Track} " +
+                         $"(점수 {best.Score.ToString("F2", CultureInfo.InvariantCulture)}, " +
+                         $"음원 {result.SourceDuration?.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture) ?? "?"}초)");
+                return result;
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"LyricsService fetch error: {ex.Message}");
+                Log.Warn($"Lyrics fetch failed: {cleanArtist} - {cleanTitle} ({ex.Message})");
             }
 
             return null;
         }
 
-        private bool TryGetCached(string cacheKey, out LyricsEntry entry)
+        // ────────────────────────── 매칭 ──────────────────────────
+
+        private sealed record Candidate(IReadOnlyList<LyricLine> Lines, TimeSpan? Duration, string Track, string Artist, double Score);
+
+        /// <summary>
+        /// 검색 결과 한 건이 찾는 곡인지 점수를 매긴다.
+        /// 예전에는 syncedLyrics가 있는 첫 항목을 그대로 채택했는데, 결과가 20건씩 오는 탓에
+        /// 조금만 어긋나도 다른 곡 가사를 자신 있게 보여줬다.
+        /// </summary>
+        private static double ScoreMatch(JsonElement item, string wantTitle, string wantArtist, TimeSpan? mediaDuration)
         {
-            // 1) 메모리 캐시
-            if (_memoryCache.TryGetValue(cacheKey, out entry!))
+            // 검색 질의와 같은 형태로 견준다 — 화면 제목에는 "[명조 카르티시아 테마곡] 가사/번역"
+            // 같은 꼬리표가 남아 있어서, 그대로 견주면 LRCLIB의 깔끔한 제목과 영영 만나지 못한다
+            string title = Normalize(StripTags(wantTitle));
+            string artist = Normalize(wantArtist);
+            if (title.Length == 0) return 0;
+
+            string gotTitle = Normalize(GetString(item, "trackName"));
+            double titleScore = Similarity(title, gotTitle);
+            if (titleScore <= 0) return 0;   // 제목이 안 맞으면 무조건 탈락
+
+            // 아티스트를 알고 그 아티스트까지 맞으면 가장 강한 신호 — 제목이 조금 어긋나도 받아들인다
+            if (artist.Length > 0)
             {
-                return true;
+                double artistScore = Similarity(artist, Normalize(GetString(item, "artistName")));
+                if (artistScore > 0) return titleScore * 0.6 + artistScore * 0.4;
             }
 
-            // 2) 디스크 캐시
-            var diskEntry = LoadFromDiskCache(cacheKey);
-            if (diskEntry != null)
+            // 아티스트를 못 믿는 경우(YouTube 업로더명)에는 제목이 완전히 같아야 한다.
+            // 그리고 재생 중인 영상 길이를 알면 길이까지 확인한다 — 같은 제목의 다른 곡을 집는 걸 막는다.
+            if (gotTitle != title) return 0;
+            if (mediaDuration is { TotalSeconds: > 0 } want && TryGetDuration(item, out TimeSpan got))
             {
-                _memoryCache[cacheKey] = diskEntry;
-                entry = diskEntry;
-                return true;
+                double diff = Math.Abs(got.TotalSeconds - want.TotalSeconds);
+                if (diff > DurationTolerance.TotalSeconds) return 0;
+                return diff <= DurationTight.TotalSeconds ? 0.85 : 0.72;
             }
 
-            entry = new LyricsEntry(new List<LyricLine>(), 0);
+            return 0.65;
+        }
+
+        private static bool TryGetDuration(JsonElement item, out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            if (item.TryGetProperty("duration", out var el) && el.ValueKind == JsonValueKind.Number)
+            {
+                duration = TimeSpan.FromSeconds(el.GetDouble());
+                return duration > TimeSpan.Zero;
+            }
             return false;
         }
 
-        private void StoreInCache(string cacheKey, LyricsEntry entry)
+        /// <summary>대소문자·공백·구두점·괄호를 걷어내 비교 가능한 형태로 만든다.</summary>
+        private static string Normalize(string s) =>
+            string.IsNullOrEmpty(s) ? string.Empty : Regex.Replace(s.ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
+
+        private static double Similarity(string want, string got)
         {
-            _memoryCache[cacheKey] = entry;
-            SaveToDiskCache(cacheKey, entry);
+            if (got.Length == 0 || want.Length == 0) return 0;
+            if (want == got) return 1.0;
+
+            // 짧은 이름의 우연한 포함을 막는다 — 아티스트 "IVE"가 "FIVE..."에 걸리는 식
+            if (Math.Min(want.Length, got.Length) < 4) return 0;
+
+            if (got.Contains(want, StringComparison.Ordinal) || want.Contains(got, StringComparison.Ordinal)) return 0.6;
+            return 0;
+        }
+
+        private static string GetString(JsonElement item, string name) =>
+            item.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
+                ? el.GetString() ?? string.Empty
+                : string.Empty;
+
+        private async Task<(Candidate? Candidate, int ResultCount)> SearchAsync(
+            string url, string wantTitle, string wantArtist, TimeSpan? mediaDuration, CancellationToken ct)
+        {
+            try
+            {
+                using var response = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Log.Warn($"Lyrics search HTTP {(int)response.StatusCode}: {url}");
+                    return (null, 0);
+                }
+
+                string json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Array) return (null, 0);
+
+                int count = root.GetArrayLength();
+                Candidate? best = null;
+
+                foreach (var item in root.EnumerateArray())
+                {
+                    double score = ScoreMatch(item, wantTitle, wantArtist, mediaDuration);
+                    if (score < MinMatchScore) continue;
+                    if (best != null && score <= best.Score) continue;
+
+                    // 반주 트랙은 가사가 없다 — 점수가 높아도 채택하지 않는다
+                    if (item.TryGetProperty("instrumental", out var inst) && inst.ValueKind == JsonValueKind.True) continue;
+
+                    if (!item.TryGetProperty("syncedLyrics", out var syn) || syn.ValueKind != JsonValueKind.String) continue;
+                    string? lrc = syn.GetString();
+                    if (string.IsNullOrWhiteSpace(lrc)) continue;
+
+                    var lines = ParseLrc(lrc);
+                    if (lines.Count == 0) continue;
+
+                    TimeSpan? duration = TryGetDuration(item, out TimeSpan parsedDuration) ? parsedDuration : null;
+
+                    best = new Candidate(lines, duration, GetString(item, "trackName"), GetString(item, "artistName"), score);
+                }
+
+                return (best, count);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Log.Warn($"Lyrics request failed: {url} ({ex.Message})");
+                return (null, 0);
+            }
+        }
+
+        /// <summary>
+        /// LRCLIB의 한국어/영어 카탈로그를 모두 노리기 위한 후보 질의.
+        /// 표시용 정리(ParseTitleAndArtist)와 달리 여기서는 "맞을 확률이 높은 순서"가 중요하다.
+        /// </summary>
+        private static List<string> BuildSearchQueries(
+            string title, string artist, string subTitle, string subArtist, string rawTitle)
+        {
+            var queries = new List<string>();
+
+            void Add(string? q)
+            {
+                if (string.IsNullOrWhiteSpace(q)) return;
+                string trimmed = q.Trim();
+                if (trimmed.Length < 2) return;
+                if (!queries.Contains(trimmed, StringComparer.OrdinalIgnoreCase)) queries.Add(trimmed);
+            }
+
+            // YouTube 제목에는 "[명조 카르티시아 테마곰] 가사/번역" 같은 꼬리표가 흔하다.
+            // 브래킷이 제목 중간에 있으면 위의 정리가 걷어내지 못해서, 검색용으로만 한 번 더 벗긴다.
+            string bareTitle = StripTags(title);
+            string bareSub = StripTags(subTitle);
+
+            foreach (string a in new[] { artist, subArtist })
+            {
+                if (string.IsNullOrEmpty(a)) continue;
+                Add($"{a} {bareTitle}");
+                if (bareSub != bareTitle) Add($"{a} {bareSub}");
+            }
+
+            if (!string.IsNullOrEmpty(bareTitle) && bareSub != bareTitle) Add($"{bareTitle} {bareSub}");
+
+            // 한국 곡은 LRCLIB에 영어 아티스트명으로만 올라온 경우가 많다 — 아티스트 없이 제목만으로도 찾는다
+            Add(bareTitle);
+            Add(bareSub);
+            Add(StripTags(rawTitle));
+
+            return queries;
+        }
+
+        /// <summary>
+        /// 제목에 붙은 꼬리표를 걷어낸다 — 브래킷 그룹(위치 무관), 가사/번역·Lyrics 같은
+        /// 단어, 구분자. 검색 질의용이고 화면 제목은 ParseTitleAndArtist가 따로 만든다.
+        /// </summary>
+        private static string StripTags(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+
+            string stripped = Regex.Replace(s, @"\[[^\]]*\]|【[^】]*】|\{[^}]*\}", " ");
+            // 구분자를 먼저 띄운다 — 그래야 "가사/번역"이 한 단어로 굳지 않고 "가사", "번역"으로 갈난다
+            stripped = Regex.Replace(stripped, @"[/\\|_]+|(?<=\s)-(?=\s)", " ");
+            stripped = Regex.Replace(stripped,
+                @"(?i)(?<=\s|^)(가사|번역|해석|lyrics?|eng\s*sub|sub|color\s*coded|romanized)(?=\s|$)", " ");
+            return Regex.Replace(stripped, @"\s+", " ").Trim();
+        }
+
+        // ────────────────────────── 싱크 보정 ──────────────────────────
+
+        /// <summary>
+        /// 뮤직비디오 인트로만큼 가사가 앞서 나가는 것을 보정한다.
+        /// 소스(음원) 길이를 모르면 손대지 않고, 보정 폭이 1초 미만이거나 30초를 넘으면
+        /// 추측이 위험하므로 역시 손대지 않는다.
+        /// </summary>
+        public static TimeSpan AdjustForSourceOffset(TimeSpan realPosition, TimeSpan mediaDuration, TimeSpan? sourceDuration)
+        {
+            if (sourceDuration is not { } source) return realPosition;
+            if (mediaDuration.TotalSeconds <= 0 || source.TotalSeconds <= 0) return realPosition;
+
+            double offset = mediaDuration.TotalSeconds - source.TotalSeconds;
+            if (offset < 1.0 || offset > 30.0) return realPosition;
+
+            return TimeSpan.FromSeconds(Math.Max(0, realPosition.TotalSeconds - offset));
+        }
+
+        // ────────────────────────── 캐시 ──────────────────────────
+
+        private bool TryGetCached(string cacheKey, out LyricsResult result)
+        {
+            if (_memoryCache.TryGetValue(cacheKey, out result!)) return true;
+
+            var fromDisk = LoadFromDiskCache(cacheKey);
+            if (fromDisk != null)
+            {
+                _memoryCache[cacheKey] = fromDisk;
+                result = fromDisk;
+                return true;
+            }
+
+            result = null!;
+            return false;
+        }
+
+        private void StoreInCache(string cacheKey, LyricsResult result)
+        {
+            _memoryCache[cacheKey] = result;
+            SaveToDiskCache(cacheKey, result);
         }
 
         private static string GetDiskCachePath(string cacheKey)
@@ -195,7 +363,7 @@ namespace TopDock.Services
             return Path.Combine(DiskCacheDir, sb + ".json");
         }
 
-        private static void SaveToDiskCache(string cacheKey, LyricsEntry entry)
+        private static void SaveToDiskCache(string cacheKey, LyricsResult result)
         {
             try
             {
@@ -203,33 +371,49 @@ namespace TopDock.Services
 
                 var dto = new DiskCacheDto
                 {
-                    Duration = entry.Duration,
-                    Lines = new List<string[]>(entry.Lines.Count)
+                    V = CacheSchemaVersion,
+                    Duration = result.SourceDuration?.TotalSeconds ?? 0,
+                    Track = result.MatchedTrack,
+                    Artist = result.MatchedArtist,
+                    Lines = new List<string[]>(result.Lines.Count)
                 };
-                foreach (var line in entry.Lines)
+                foreach (var line in result.Lines)
                 {
                     dto.Lines.Add(new[] { line.Time.TotalSeconds.ToString(CultureInfo.InvariantCulture), line.Text });
                 }
 
-                string json = JsonSerializer.Serialize(dto, CacheJsonOptions);
-                File.WriteAllText(GetDiskCachePath(cacheKey), json);
+                File.WriteAllText(GetDiskCachePath(cacheKey), JsonSerializer.Serialize(dto, CacheJsonOptions));
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Lyrics disk cache save error: {ex.Message}");
+                Log.Warn($"Lyrics disk cache save failed: {ex.Message}");
             }
         }
 
-        private static LyricsEntry? LoadFromDiskCache(string cacheKey)
+        private static void TryDeleteStaleCacheFile(string path)
+        {
+            try { File.Delete(path); }
+            catch (Exception ex) { Log.Warn($"Lyrics cache cleanup failed: {ex.Message}"); }
+        }
+
+        private static LyricsResult? LoadFromDiskCache(string cacheKey)
         {
             try
             {
                 string path = GetDiskCachePath(cacheKey);
                 if (!File.Exists(path)) return null;
 
-                string json = File.ReadAllText(path);
-                var dto = JsonSerializer.Deserialize<DiskCacheDto>(json, CacheJsonOptions);
-                if (dto?.Lines == null || dto.Lines.Count == 0) return null;
+                var dto = JsonSerializer.Deserialize<DiskCacheDto>(File.ReadAllText(path), CacheJsonOptions);
+
+                // 버전이 다른 캐시는 버린다 — 예전 매칭 로직이 남긴 잘못된 결과를 물려받지 않기 위해
+                // 버전이 다른 캐시는 버리고 파일도 지운다 — 예전 매칭 로직이 남긴 결과가
+                // 디스크에 계속 쌓여 있으면 캐시 폴더만 부풀고 다시 쓰이지도 않는다
+                if (dto == null || dto.V != CacheSchemaVersion)
+                {
+                    TryDeleteStaleCacheFile(path);
+                    return null;
+                }
+                if (dto.Lines == null || dto.Lines.Count == 0) return null;
 
                 var lines = new List<LyricLine>(dto.Lines.Count);
                 foreach (var pair in dto.Lines)
@@ -243,58 +427,29 @@ namespace TopDock.Services
 
                 if (lines.Count == 0) return null;
                 lines.Sort((a, b) => a.Time.CompareTo(b.Time));
-                return new LyricsEntry(lines, dto.Duration);
+
+                TimeSpan? duration = dto.Duration > 0 ? TimeSpan.FromSeconds(dto.Duration) : null;
+                return new LyricsResult(lines, duration, dto.Track, dto.Artist);
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Lyrics disk cache load error: {ex.Message}");
+                Log.Warn($"Lyrics disk cache load failed: {ex.Message}");
                 return null;
             }
         }
 
         private sealed class DiskCacheDto
         {
+            public int V { get; set; }
             public double Duration { get; set; }
+            public string Track { get; set; } = string.Empty;
+            public string Artist { get; set; } = string.Empty;
             public List<string[]> Lines { get; set; } = new();
         }
 
-        private async Task<LyricsEntry?> FetchAndParseAsync(string url, CancellationToken ct)
-        {
-            try
-            {
-                using var response = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode) return null;
-
-                string json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0)
-                {
-                    foreach (var item in root.EnumerateArray())
-                    {
-                        if (item.TryGetProperty("syncedLyrics", out var synProp) &&
-                            !string.IsNullOrEmpty(synProp.GetString()))
-                        {
-                            var parsed = ParseLrc(synProp.GetString()!);
-                            if (parsed.Count > 0)
-                            {
-                                // LRCLIB의 음원 길이를 캐시 엔트리에 함께 저장
-                                double duration = 0;
-                                if (item.TryGetProperty("duration", out var durProp) &&
-                                    durProp.ValueKind == JsonValueKind.Number)
-                                {
-                                    duration = durProp.GetDouble();
-                                }
-                                return new LyricsEntry(parsed, duration);
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-            return null;
-        }
+        // ────────────────────────── 제목/아티스트 정리 ──────────────────────────
+        // 주의: 이 함수의 결과는 "검색 질의"와 "화면에 보이는 제목" 양쪽에 쓰인다.
+        // 그래서 규칙을 바꿀 때는 가사 검색만이 아니라 노치에 뜨는 제목도 함께 확인해야 한다.
 
         public static (string Title, string Artist) ParseTitleAndArtist(string rawTitle, string rawArtist)
         {
@@ -432,23 +587,6 @@ namespace TopDock.Services
 
             result.Sort((a, b) => a.Time.CompareTo(b.Time));
             return result;
-        }
-
-        // mediaDuration: SMTC에서 받아온 실제 재생 중인 영상의 총 길이
-        public TimeSpan GetAdjustedPosition(TimeSpan realPosition, TimeSpan mediaDuration)
-        {
-            // LRCLIB 음원 길이를 모르거나 미디어 길이가 없으면 보정 안 함
-            if (_lrcDuration <= 0 || mediaDuration.TotalSeconds <= 0)
-                return realPosition;
-
-            double offset = mediaDuration.TotalSeconds - _lrcDuration;
-
-            // 오프셋이 너무 크거나(60초 이상), 음수거나 거의 0이면 무시 (같은 음원 재생 시 오작동 방지)
-            if (offset < 1.0 || offset > 60.0)
-                return realPosition;
-
-            double adjusted = realPosition.TotalSeconds - offset;
-            return TimeSpan.FromSeconds(Math.Max(0, adjusted));
         }
 
         public void Dispose()

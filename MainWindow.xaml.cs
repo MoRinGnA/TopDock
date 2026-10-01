@@ -154,7 +154,6 @@ namespace TopDock
         private bool _orbCentral;     // 중앙(작업 중) 오브가 떠 있는가
         private string _lastBeamState = "";
         private bool _isExpanded = false;
-        private bool _hasLyrics = false;
         private bool _isVolumeAdjusting = false;
         private bool _volumeBarVisible = false;
         private bool HasMedia => !string.IsNullOrEmpty(_lastMediaKey);
