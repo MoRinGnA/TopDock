@@ -298,38 +298,10 @@ namespace TopDock.Services
         }
 
         /// <summary>
-        /// 제목에 붙은 꼬리표를 걷어낸다 — 브래킷 그룹(위치 무관), 가사/번역·Lyrics 같은
-        /// 단어, 구분자. 검색 질의용이고 화면 제목은 ParseTitleAndArtist가 따로 만든다.
+        /// 검색 질의용으로 태그를 걷어낸다. 화면 제목과 같은 규칙(RemoveTags)을 쓴다 —
+        /// 예전에는 여기서 대괄호만 지워서 "(Official Video)"가 질의에 그대로 남았다.
         /// </summary>
-        private static string StripTags(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return string.Empty;
-
-            string stripped = Regex.Replace(s, @"\[[^\]]*\]|【[^】]*】|\{[^}]*\}", " ");
-            // 구분자를 먼저 띄운다 — 그래야 "가사/번역"이 한 단어로 굳지 않고 "가사", "번역"으로 갈난다
-            stripped = Regex.Replace(stripped, @"[/\\|_]+|(?<=\s)-(?=\s)", " ");
-            stripped = Regex.Replace(stripped,
-                @"(?i)(?<=\s|^)(가사|번역|해석|lyrics?|eng\s*sub|sub|color\s*coded|romanized)(?=\s|$)", " ");
-            return Regex.Replace(stripped, @"\s+", " ").Trim();
-        }
-
-        // ────────────────────────── 싱크 보정 ──────────────────────────
-
-        /// <summary>
-        /// 뮤직비디오 인트로만큼 가사가 앞서 나가는 것을 보정한다.
-        /// 소스(음원) 길이를 모르면 손대지 않고, 보정 폭이 1초 미만이거나 30초를 넘으면
-        /// 추측이 위험하므로 역시 손대지 않는다.
-        /// </summary>
-        public static TimeSpan AdjustForSourceOffset(TimeSpan realPosition, TimeSpan mediaDuration, TimeSpan? sourceDuration)
-        {
-            if (sourceDuration is not { } source) return realPosition;
-            if (mediaDuration.TotalSeconds <= 0 || source.TotalSeconds <= 0) return realPosition;
-
-            double offset = mediaDuration.TotalSeconds - source.TotalSeconds;
-            if (offset < 1.0 || offset > 30.0) return realPosition;
-
-            return TimeSpan.FromSeconds(Math.Max(0, realPosition.TotalSeconds - offset));
-        }
+        private static string StripTags(string s) => RemoveTags(s);
 
         // ────────────────────────── 캐시 ──────────────────────────
 
@@ -448,118 +420,213 @@ namespace TopDock.Services
         }
 
         // ────────────────────────── 제목/아티스트 정리 ──────────────────────────
-        // 주의: 이 함수의 결과는 "검색 질의"와 "화면에 보이는 제목" 양쪽에 쓰인다.
-        // 그래서 규칙을 바꿀 때는 가사 검색만이 아니라 노치에 뜨는 제목도 함께 확인해야 한다.
+        //
+        // YouTube 제목은 "아티스트 - 곡명" 하나로 끝나지 않는다. 앞뒤에 [MV]·(Official Video)
+        // 같은 태그가 붙고, 곡명이 따옴표로 묶이고, 한글/영문 병기가 괄호로 따라붙는다.
+        // 예전에는 정규식 여섯 개가 앞의 결과를 덮어쓰는 방식이라 규칙 하나가 어긋나면 뒤가
+        // 전부 무너졌다 — 어퍼스트로피 하나에 "Guns N' Roses - Sweet Child O' Mine"이
+        // "Guns N" / "Roses - Sweet Child O"로 갈라졌고, "(Official Audio)"가 단어째 지워진
+        // 자리에 빈 괄호만 남아 제목이 "Blinding Lights ( )"가 됐다.
+        //
+        // 지금은 순서가 분명하다: ① 폭 정규화 ② 태그 제거 ③ 아티스트/곡명 분리
+        // ④ 괄호 병기 분리 ⑤ 구두점 정리. 각 단계는 앞 단계의 결과만 본다.
+
+        private static readonly string[] ArtistSeparators = { " - ", " – ", " — ", " _ ", " | " };
+
+        /// <summary>
+        /// 대괄호·중괄호 그룹은 안에 뭐가 있든 버린다 — 업로더가 붙인 꼬리표다
+        /// ("[MV]", "[4K]", "[명조 카르티시아 테마곡]", "[가사/번역]" 모두 같은 취급).
+        /// </summary>
+        private static readonly Regex BracketGroup = new(@"\s*[\[\{【][^\]\}】]*[\]\}】]", RegexOptions.Compiled);
+
+        /// <summary>괄호는 안이 태그일 때만 버린다 — "(밤편지)" 같은 병기 이름은 남겨야 한다.</summary>
+        private static readonly Regex TaggedParen = new(
+            @"\s*\(\s*(?i:official|mv|m/v|music\s*video|video|audio|lyrics?|lyric\s*video|performance|dance\s*practice|special\s*clip|teaser|shorts|live|4k|8k|hd|uhd|color\s*coded|가사|번역|해석|eng\s*sub|sub|playlist|loop)\b[^)]*\)",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// 괄호 밖에 맨몸으로 붙은 태그. 낱말 경계가 분명할 때만 지운다 —
+        /// "Video Games"의 video, "Live and Learn"의 live를 곡명에서 떼어내지 않기 위해서다.
+        /// </summary>
+        private static readonly Regex BareTag = new(
+            @"(?<=^|[\s\|·,])[-–—_]?\s*(?i:official\s*m/?v|official\s*(?:audio|video)|music\s*video|lyric\s*video|color\s*coded|m/?v|가사\s*/?\s*번역|가사|번역|해석|eng\s*sub)(?=$|[\s\|·,])",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// 곡명이 따옴표로 묶인 형식 — 앞은 아티스트로 본다.
+        /// 여는 따옴표 앞에 낱말이 붙어 있으면 따옴표가 아니다: "Guns N' Roses"의 어퍼스트로피,
+        /// "Don't"의 어퍼스트로피, "O' Mine"의 어퍼스트로피는 전부 낱말 안에 박혀 있다.
+        /// </summary>
+        private static readonly Regex QuotedTitle = new(
+            @"^(?<before>.*?)(?<=^|[\s\-–—_|,·])[""'‘’“”](?<inside>[^""'‘’“”]+?)[""'‘’“”](?=$|[\s\-–—_|,·\)])",
+            RegexOptions.Compiled);
 
         public static (string Title, string Artist) ParseTitleAndArtist(string rawTitle, string rawArtist)
         {
-            var res = ParseTitleAndArtistFull(rawTitle, rawArtist);
-            return (res.CleanTitle, res.CleanArtist);
+            var parsed = ParseTitleAndArtistFull(rawTitle, rawArtist);
+            return (parsed.CleanTitle, parsed.CleanArtist);
         }
 
         public static (string CleanTitle, string CleanArtist, string SubTitle, string SubArtist) ParseTitleAndArtistFull(string rawTitle, string rawArtist)
         {
-            string title = rawTitle?.Trim() ?? string.Empty;
-            string artist = rawArtist?.Trim() ?? string.Empty;
+            string originalTitle = NormalizeWidth((rawTitle ?? string.Empty).Trim());
+            string title = RemoveTags(originalTitle);
+            string artist = CleanChannelName(NormalizeWidth((rawArtist ?? string.Empty).Trim()));
 
-            // 1. Ignore distributor/broadcasting channels
-            if (ChannelsToIgnore.Contains(artist) ||
+            // 곡명이 따옴표로 묶여 있으면 그게 가장 확실한 단서다 (IVE 아이브 'I WANT' MV)
+            var quoted = QuotedTitle.Match(title);
+
+            if (quoted.Success)
+            {
+                string before = quoted.Groups["before"].Value;
+                string inside = quoted.Groups["inside"].Value;
+                if (!string.IsNullOrWhiteSpace(inside))
+                {
+                    title = inside;
+                    if (!string.IsNullOrWhiteSpace(before)) artist = before;
+                }
+            }
+            else
+            {
+                foreach (string separator in ArtistSeparators)
+                {
+                    int at = title.IndexOf(separator, StringComparison.Ordinal);
+                    if (at <= 0) continue;
+
+                    string before = title[..at];
+                    string after = title[(at + separator.Length)..];
+                    if (string.IsNullOrWhiteSpace(before) || string.IsNullOrWhiteSpace(after)) continue;
+
+                    artist = before;
+                    title = after;
+                    break;
+                }
+            }
+
+            var titleParts = SplitAltName(title);
+            var artistParts = SplitAltName(artist);
+
+            // 태그를 다 걷어내고 남는 게 없으면 원본을 그대로 보여준다 ("M/V" 같은 제목)
+            string cleanTitle = CleanName(titleParts.Main);
+            if (cleanTitle.Length == 0) cleanTitle = CleanName(originalTitle);
+
+            return (
+                cleanTitle,
+                CleanName(artistParts.Main),
+                CleanName(titleParts.Alt),
+                CleanName(artistParts.Alt));
+        }
+
+        /// <summary>업로더 이름은 아티스트가 아니다 — 배급·방송 채널이면 버리고 "- Topic"은 떼어낸다.</summary>
+        private static string CleanChannelName(string artist)
+        {
+            if (string.IsNullOrEmpty(artist)) return string.Empty;
+
+            if (artist.EndsWith("- Topic", StringComparison.OrdinalIgnoreCase))
+                artist = artist[..^7].Trim();
+
+            if (artist.EndsWith("VEVO", StringComparison.Ordinal))
+                return string.Empty;
+
+            bool isChannel =
+                ChannelsToIgnore.Contains(artist) ||
                 artist.EndsWith("Entertainment", StringComparison.OrdinalIgnoreCase) ||
                 artist.EndsWith("Records", StringComparison.OrdinalIgnoreCase) ||
                 artist.EndsWith("Labels", StringComparison.OrdinalIgnoreCase) ||
-                artist.EndsWith("Official", StringComparison.OrdinalIgnoreCase))
-            {
-                artist = string.Empty;
-            }
+                artist.EndsWith("Official", StringComparison.OrdinalIgnoreCase);
 
-            if (artist.EndsWith("- Topic", StringComparison.OrdinalIgnoreCase))
-            {
-                artist = artist.Substring(0, artist.Length - 7).Trim();
-            }
-
-            // 2. Strip ALL leading brackets (e.g. "[MV]", "[M/V]", "[가사/Lyrics]", "[Official Audio]", "【MV】")
-            title = Regex.Replace(title, @"^\s*(\[[^\]]*\]|【[^】]*】)\s*", "");
-            title = Regex.Replace(title, @"\s*(\[[^\]]*\]|【[^】]*】)\s*$", "");
-
-            // 3. Strip trailing keywords & brackets
-            title = Regex.Replace(title, @"(?i)\b(Official\s*M/?V|M/?V|Music\s*Video|Performance\s*Video|Official\s*Audio|Lyric\s*Video|Special\s*Clip)\b", " ");
-            title = Regex.Replace(title, @"\s*\((Official|MV|M/V|Audio|Video|가사|Lyrics|Special\s*Clip)[^\)]*\)\s*$", "", RegexOptions.IgnoreCase);
-
-            // 4. Match quotation pattern: Artist 'Song Title' (e.g. Hearts2Hearts 'The Chase', QWER '고민중독')
-            var quoteMatch = Regex.Match(title, @"^(.*?)\s*[\u0027\u0022\u2018\u201C]([^\u0027\u0022\u2019\u201D]+)[\u0027\u0022\u2019\u201D]");
-            if (quoteMatch.Success)
-            {
-                string before = quoteMatch.Groups[1].Value.Trim();
-                string inside = quoteMatch.Groups[2].Value.Trim();
-
-                if (!string.IsNullOrEmpty(inside))
-                {
-                    title = inside;
-                    if (!string.IsNullOrEmpty(before))
-                    {
-                        artist = before;
-                    }
-                }
-            }
-            // 5. Match separator pattern: "Artist - Title" or "Artist _ Title" or "Artist | Title"
-            else
-            {
-                string[] separators = new[] { " - ", " – ", " — ", " _ ", " | " };
-                foreach (var sep in separators)
-                {
-                    if (title.Contains(sep))
-                    {
-                        var parts = title.Split(new[] { sep }, 2, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length == 2)
-                        {
-                            artist = parts[0].Trim();
-                            title = parts[1].Trim();
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // 6. Extract sub-title and sub-artist from bilingual parentheses (e.g. "Through the night(밤편지)", "DAY6 (데이식스)")
-            string subTitle = string.Empty;
-            var titleParen = Regex.Match(title, @"^(.*?)\s*\(([^\)]+)\)");
-            if (titleParen.Success)
-            {
-                string mainPart = titleParen.Groups[1].Value.Trim();
-                string parenPart = titleParen.Groups[2].Value.Trim();
-                if (!string.IsNullOrEmpty(mainPart) && !string.IsNullOrEmpty(parenPart))
-                {
-                    title = mainPart;
-                    subTitle = parenPart;
-                }
-            }
-
-            string subArtist = string.Empty;
-            var artistParen = Regex.Match(artist, @"^(.*?)\s*\(([^\)]+)\)");
-            if (artistParen.Success)
-            {
-                string mainPart = artistParen.Groups[1].Value.Trim();
-                string parenPart = artistParen.Groups[2].Value.Trim();
-                if (!string.IsNullOrEmpty(mainPart) && !string.IsNullOrEmpty(parenPart))
-                {
-                    artist = mainPart;
-                    subArtist = parenPart;
-                }
-            }
-
-            // Cleanup quotes & whitespace
-            title = Regex.Replace(title, @"[\u0027\u0022\u2018\u2019\u201C\u201D]", " ").Trim();
-            artist = Regex.Replace(artist, @"[\u0027\u0022\u2018\u2019\u201C\u201D]", " ").Trim();
-            subTitle = Regex.Replace(subTitle, @"[\u0027\u0022\u2018\u2019\u201C\u201D]", " ").Trim();
-            subArtist = Regex.Replace(subArtist, @"[\u0027\u0022\u2018\u2019\u201C\u201D]", " ").Trim();
-
-            title = Regex.Replace(title, @"\s+", " ").Trim();
-            artist = Regex.Replace(artist, @"\s+", " ").Trim();
-            subTitle = Regex.Replace(subTitle, @"\s+", " ").Trim();
-            subArtist = Regex.Replace(subArtist, @"\s+", " ").Trim();
-
-            return (title, artist, subTitle, subArtist);
+            return isChannel ? string.Empty : artist;
         }
+
+        /// <summary>전각 괄호·따옴표를 반각으로 — 일본·중국 곡 제목에 ［］가 흔하다.</summary>
+        private static string NormalizeWidth(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+
+            var sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                sb.Append(c switch
+                {
+                    '［' => '[', '］' => ']',
+                    '【' => '[', '】' => ']',
+                    '（' => '(', '）' => ')',
+                    '｛' => '{', '｝' => '}',
+                    '“' => '"', '”' => '"',
+                    '‘' => '\'', '’' => '\'',
+                    '／' => '/',
+                    _ => c
+                });
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>태그를 걷어낸다. 괄호 안 태그를 먼저 지워야 "Blinding Lights ( )" 같은 빈 괄호가 남지 않는다.</summary>
+        private static string RemoveTags(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+
+            string result = NormalizeWidth(s);
+            for (int pass = 0; pass < 3; pass++)
+            {
+                string next = BracketGroup.Replace(result, " ");
+                next = TaggedParen.Replace(next, " ");
+                next = BareTag.Replace(next, " ");
+                if (next == result) break;
+                result = next;
+            }
+
+            result = Regex.Replace(result, @"\s+", " ");
+            return Regex.Replace(result, @"\s*[-–—_|·,]+\s*$", string.Empty).Trim();
+        }
+
+        /// <summary>
+        /// 마지막 괄호 그룹을 (앞부분, 괄호 안)으로 가른다 — "예뻤어 (You Were Beautiful)"처럼
+        /// 한글/영문 병기가 괄호로 붙는 형식. 닫는 괄호 뒤에 글자가 붙어 있으면 이름의 일부로 본다.
+        /// </summary>
+        private static (string Main, string Alt) SplitAltName(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return (s ?? string.Empty, string.Empty);
+
+            int depth = 0;
+            int close = -1;
+            for (int i = s.Length - 1; i >= 0; i--)
+            {
+                char c = s[i];
+                if (c == ')') { depth++; if (close < 0) close = i; }
+                else if (c == '(')
+                {
+                    depth--;
+                    if (depth > 0) continue;
+
+                    // "(G)I-DLE"의 "(G)"처럼 뒤에 글자가 붙어 있으면 병기가 아니라 이름이다
+                    bool partOfName = close < s.Length - 1 && !char.IsWhiteSpace(s[close + 1]);
+                    if (!partOfName)
+                    {
+                        string main = s[..i].TrimEnd();
+                        string alt = s[(i + 1)..close].Trim();
+                        if (main.Length > 0 && alt.Length > 0) return (main, alt);
+                    }
+                    return (s, string.Empty);
+                }
+            }
+
+            return (s, string.Empty);
+        }
+
+        /// <summary>남은 구두점을 정리한다. 곡명 안의 어퍼스트로피는 살린다.</summary>
+        private static string CleanName(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+
+            string cleaned = Regex.Replace(s, @"\(\s*\)|\[\s*\]", " ");
+            cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
+            // 어퍼스트로피는 남긴다 — "O' Mine", "Believin'"처럼 곡명의 일부인 경우가 많다
+            cleaned = cleaned.Trim('"', '“', '”', '-', '–', '—', '|', '_', ',', '·', ' ');
+
+            return cleaned.Trim().Trim('/', ' ');
+        }
+
 
         private static List<LyricLine> ParseLrc(string lrcContent)
         {
@@ -577,10 +644,10 @@ namespace TopDock.Services
                     {
                         string text = match.Groups[3].Value.Trim();
                         var time = TimeSpan.FromMinutes(minutes) + TimeSpan.FromSeconds(seconds);
-                        if (!string.IsNullOrEmpty(text))
-                        {
-                            result.Add(new LyricLine(time, text));
-                        }
+
+                        // 빈 시각 표시도 그대로 담는다. LRC에서 빈 줄은 "여기서부터 반주"라는
+                        // 뜻이고, 싱크를 소리로 맞출 때 이 표시가 노래/쉼을 가르는 근거가 된다.
+                        result.Add(new LyricLine(time, text));
                     }
                 }
             }

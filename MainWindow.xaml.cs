@@ -155,6 +155,10 @@ namespace TopDock
         private string _lastBeamState = "";
         private bool _isExpanded = false;
         private bool _isVolumeAdjusting = false;
+
+        // 가사 싱크 — 뮤직비디오 앞 여백(인트로)만큼 가사를 늦춘다.
+        private TimeSpan _lyricOffset = TimeSpan.Zero;
+
         private bool _volumeBarVisible = false;
         private bool HasMedia => !string.IsNullOrEmpty(_lastMediaKey);
         private List<LyricLine> _syncedLyrics = new();

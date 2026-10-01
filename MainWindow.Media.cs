@@ -196,9 +196,6 @@ namespace TopDock
 
         private static readonly TimeSpan LyricLookahead = TimeSpan.FromMilliseconds(500);
 
-        /// <summary>현재 곡 가사의 음원 길이(LRCLIB 기준) — 뮤직비디오 인트로 보정에 쓰인다.</summary>
-        private TimeSpan? _lyricSourceDuration;
-
         /// <summary>이 곡의 가사를 아직 찾는 중인가.</summary>
         private bool _lyricsPending;
 
@@ -213,8 +210,11 @@ namespace TopDock
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
                 UpdateTimelineDisplay(currentPos, duration);
-                // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤
-                var lyricPos = LyricsService.AdjustForSourceOffset(currentPos + LyricLookahead, duration, _lyricSourceDuration);
+
+                // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤.
+                // 오프셋은 뮤직비디오의 앞뒤 여백(인트로)을 보정한 값이다.
+                var lyricPos = currentPos + LyricLookahead - _lyricOffset;
+                if (lyricPos < TimeSpan.Zero) lyricPos = TimeSpan.Zero;
                 UpdateLyricsDisplay(lyricPos);
             }
         }
@@ -247,7 +247,6 @@ namespace TopDock
             string requestKey = _lastMediaKey;
 
             _syncedLyrics.Clear();
-            _lyricSourceDuration = null;
             _lyricsPending = true;
             SetLyricsVisibility(false);
             RefreshCompactWidth();
@@ -264,8 +263,21 @@ namespace TopDock
             if (result != null && result.Lines.Count > 0)
             {
                 _syncedLyrics = new List<LyricLine>(result.Lines);
-                _lyricSourceDuration = result.SourceDuration;
                 SetLyricsVisibility(true);
+
+                // 뮤직비디오는 음원보다 앞(인트로)·뒤(아웃트로)가 길 수 있다. 가사는 음원 기준
+                // 시각이므로 그 앞 여백만큼 늦춰야 맞는다.
+                //
+                // 소리를 듣고 재는 방법도 만들어 봤지만, 실제 곡에서는 "노래하는 구간"을 가릴
+                // 신호가 너무 약해 같은 곡에 2~11초로 들쭉날쭉했다(합성에선 잘 됐지만 착시였다).
+                // 그래서 규칙으로 간다 — 길이 차이는 (인트로 + 아웃트로)라 인트로만 따로 알 수
+                // 없으니, 차이를 인트로로 보되 상한을 둬서 과하게 늦지 않게 한다.
+                double videoSec = mediaDuration.TotalSeconds;
+                double sourceSec = result.SourceDuration?.TotalSeconds ?? 0;
+                double offsetSeconds = EstimateIntroOffset(videoSec, sourceSec);
+                _lyricOffset = TimeSpan.FromSeconds(offsetSeconds);
+                Log.Info($"Lyrics sync: 영상 {videoSec:F0}초 · 음원 {sourceSec:F0}초 · 차이 {videoSec - sourceSec:F0}초" +
+                         $" · 적용한 인트로 {offsetSeconds:F1}초");
             }
             else if (_currentViewMode == ViewMode.MediaExpanded)
             {
@@ -279,6 +291,23 @@ namespace TopDock
         private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
         {
             ToggleClipboardHistory();
+        }
+
+        /// <summary>인트로로 보정할 상한(초). 차이가 이보다 크면 대부분 아웃트로가 긴 것이라 여기서 자른다.</summary>
+        private const double MaxIntroSeconds = 12.0;
+
+        /// <summary>
+        /// 영상 길이와 음원 길이만으로 인트로를 어림한다. 뮤직비디오의 앞뒤 여백을 정확히 나눌
+        /// 근거는 없으니, 과하게 늦추지 않는 선까지만 보정한다.
+        /// 음원 길이가 영상에 비해 지나치게 짧으면(다른 곡을 잘못 찾은 경우) 보정하지 않는다.
+        /// </summary>
+        private static double EstimateIntroOffset(double videoSec, double sourceSec)
+        {
+            if (videoSec <= 0 || sourceSec <= 0) return 0;
+            if (sourceSec < videoSec * 0.8) return 0;      // 못 믿을 매칭 — 밀지 않는다
+            double diff = videoSec - sourceSec;
+            if (diff <= 0) return 0;
+            return Math.Min(diff, MaxIntroSeconds);
         }
 
         /// <summary>가사 영역의 내용을 보일지. 자리(폭·열)는 ApplyLyricsLayout이 따로 맡는다.</summary>
@@ -330,12 +359,14 @@ namespace TopDock
 
             if (activeIndex >= 0)
             {
+                // LRC의 빈 항목은 "여기서부터 반주"라는 표시다. 그 자리에서는 현재 줄을 비우고
+                // 앞뒤 줄만 남긴다 — 반주가 흐르는 동안 이전 가사가 붙어 있으면 멈춘 것처럼 보인다.
                 string activeText = _syncedLyrics[activeIndex].Text;
                 bool lyricChanged = CurrentLyricText.Text != activeText;
                 CompactLyricText.Text = activeText;
-                PrevLyricText.Text = activeIndex > 0 ? _syncedLyrics[activeIndex - 1].Text : string.Empty;
+                PrevLyricText.Text = NearestText(activeIndex - 1, -1);
                 CurrentLyricText.Text = activeText;
-                NextLyricText.Text = activeIndex < _syncedLyrics.Count - 1 ? _syncedLyrics[activeIndex + 1].Text : string.Empty;
+                NextLyricText.Text = NearestText(activeIndex + 1, 1);
 
                 // 가사가 바뀔 때 살짝 떠오르는 트랜지션
                 if (lyricChanged)
@@ -372,6 +403,16 @@ namespace TopDock
             NotchBorder.BeginAnimation(Border.WidthProperty,
                 new DoubleAnimation { To = target, Duration = duration, EasingFunction = ease });
             UpdateGlowDimensions(target, 38, duration, ease);
+        }
+
+        /// <summary>가까운 쪽에서 빈 항목이 아닌 가사를 찾는다(반주 표시를 건너뛰기 위해).</summary>
+        private string NearestText(int from, int step)
+        {
+            for (int i = from; i >= 0 && i < _syncedLyrics.Count; i += step)
+            {
+                if (!string.IsNullOrWhiteSpace(_syncedLyrics[i].Text)) return _syncedLyrics[i].Text;
+            }
+            return string.Empty;
         }
 
         private void AnimateLyricLine(TextBlock text)
@@ -439,8 +480,8 @@ namespace TopDock
             StopEqualizerAnimation();
 
             _syncedLyrics.Clear();
-            _lyricSourceDuration = null;
             _lyricsPending = false;
+            _lyricOffset = TimeSpan.Zero;
             SetLyricsVisibility(false);
 
             ExpandedProgressBar.Value = 0;
