@@ -246,7 +246,9 @@ namespace TopDock.Controls
             double lightScale = Math.Clamp(Math.Sqrt(w * h) / 65.0, 1.0, 3.2);
             double gain = Math.Sqrt(lightScale); // 굵기·헤드는 완만하게(과하면 뭉개진다)
             // 안쪽 물들임 — 큰 표면에서만 빛이 패널 안으로 번지게 한다(작은 알약은 그대로)
-            double wash = Math.Clamp((lightScale - 1.2) * 0.14, 0, 0.22);
+            double wash = Math.Clamp((lightScale - 1.2) * 0.12, 0, 0.16);
+            // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다(큰 표면 전용)
+            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 1.1) * 0.055, 0, 0.13) : 0.0;
 
             double headSigma = HeadSigma * formScale * gain;
             double tailSpan = TailSpan * (large ? 1.12 : 1.0);
@@ -266,6 +268,23 @@ namespace TopDock.Controls
 
             var ringGeo = RingGeometry(w, h, bw);
 
+            // 0) 색 유리 틴트 — 가장자리에서 안쪽으로 앨범색이 스며든다.
+            //    균일 채우기 대신 비네트라 가운데는 어둡게 남아 내용이 묻히지 않는다.
+            if (tint > 0.005)
+            {
+                byte ta = (byte)Math.Clamp(tint * fade * 255, 0, 255);
+                var edge = Color.FromArgb(ta, accent.R, accent.G, accent.B);
+                var clear = Color.FromArgb(0, accent.R, accent.G, accent.B);
+                var tb = new RadialGradientBrush(clear, edge)
+                {
+                    Center = new Point(0.5, 0.5), GradientOrigin = new Point(0.5, 0.5),
+                    RadiusX = 0.58, RadiusY = 0.58,
+                };
+                tb.GradientStops.Insert(1, new GradientStop(clear, 0.35));
+                tb.Freeze();
+                dc.DrawRectangle(tb, null, new Rect(0, 0, w, h));
+            }
+
             // 1) 상시 림 — 평소에도 테두리는 어둑하게 살아 있다
             dc.DrawGeometry(null, PenFor(accent, (int)(BaseRim * fade * 255), bw), ringGeo);
 
@@ -284,7 +303,7 @@ namespace TopDock.Controls
         private void DrawBloom(DrawingContext dc, Color accent, double head, double fade, double breathe,
             double formScale, double headSigma, double tailSpan)
         {
-            double[] th = { 14.0, 8.0, 4.6, 2.4 };
+            double[] th = { 9.0, 5.4, 3.2, 1.8 };
             double[] am = { 0.06, 0.12, 0.22, 0.40 };
             for (int i = 0; i < _ring.Count; i++)
             {
@@ -346,7 +365,7 @@ namespace TopDock.Controls
                 if (d < bd) { bd = d; best = _ring[i]; }
             }
 
-            double r = Math.Min(ActualWidth, ActualHeight) * 0.95;
+            double r = Math.Min(ActualWidth, ActualHeight) * 0.60;
             double a = Math.Clamp(wash * fade * breathe, 0, 1);
             var brush = new RadialGradientBrush(
                 Color.FromArgb((byte)(a * 255), accent.R, accent.G, accent.B), Colors.Transparent)
