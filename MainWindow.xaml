@@ -235,8 +235,8 @@
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
 
-            <!-- Main notch border — 배터리 상태(충전=녹색 / 부족=적색)는
-                 코드비하인드에서 이 테두리의 BorderBrush로만 표현한다. -->
+            <!-- Main notch border — 배터리 상태는 테두리를 칠하지 않고
+                 안쪽 우측의 작은 점(BatteryDot)과 펼침 뷰의 퍼센트 텍스트로만 알린다. -->
             <Border x:Name="NotchBorder" Width="100" Height="38"
                     Style="{StaticResource DarkNotchStyle}"
                     MouseEnter="Notch_MouseEnter"
@@ -404,11 +404,20 @@
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </Grid>
 
-                        <!-- Idle expanded: 얼굴만 — 텍스트·버튼 전면 제거 (미니멀) -->
+                        <!-- Idle expanded: 얼굴 + 배터리 퍼센트 한 줄 (텍스트·버튼 최소화) -->
                         <StackPanel x:Name="IdleExpandedView" Opacity="0" IsHitTestVisible="False"
                                     VerticalAlignment="Center" HorizontalAlignment="Center">
                             <controls:AiFace x:Name="ExpandedFace" Width="58" Height="40"
                                              HorizontalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
+                                        Margin="0,12,0,0" Visibility="Collapsed" x:Name="ExpandedBatteryPanel">
+                                <Ellipse x:Name="ExpandedBatteryDot" Width="6" Height="6"
+                                         Fill="#34C759" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ExpandedBatteryText" Text=""
+                                           Margin="6,0,0,0" VerticalAlignment="Center"
+                                           Foreground="#A8A8AD" FontSize="12" FontWeight="Medium"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                            </StackPanel>
                         </StackPanel>
 
                         <!-- Media compact -->
@@ -662,6 +671,16 @@
                                        FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
                         </Grid>
                     </Border>
+
+                    <!-- 배터리 상태 점 (접힌 기본 아일랜드 전용)
+                         일반=안 그림 / 충전 중=녹색 + 은은한 pulse / 부족=적색 고정 -->
+                    <Grid x:Name="BatteryDot" Width="12" Height="12"
+                          HorizontalAlignment="Right" VerticalAlignment="Center"
+                          Margin="0,0,12,0" Visibility="Collapsed" IsHitTestVisible="False">
+                        <Ellipse x:Name="BatteryDotGlow" Width="12" Height="12"
+                                 Opacity="0.3" Fill="#34C759"/>
+                        <Ellipse x:Name="BatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
+                    </Grid>
 
                 </Grid>
             </Border>

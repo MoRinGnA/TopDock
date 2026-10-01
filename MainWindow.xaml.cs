@@ -22,6 +22,9 @@ namespace TopDock
     {
         private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded, Assistant }
 
+        /// <summary>배터리는 퍼센트가 아니라 3분류로만 판단한다.</summary>
+        private enum BatteryLevel { Normal, Charging, Low }
+
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int WM_NCHITTEST = 0x0084;
@@ -74,6 +77,11 @@ namespace TopDock
         // ── AI 비서 상태 ──
         private CancellationTokenSource? _assistantCts;
         private bool _assistantBusy;
+
+        // ── 배터리 표시 ──
+        private BatteryLevel _batteryLevel = BatteryLevel.Normal;
+        private float _batteryPercent = -1f;
+        private bool _batteryPulseRunning;
         // 클립보드 히스토리 (최근 5개, 최신이 앞; 텍스트/이미지 혼합)
         private sealed record ClipboardItem(string Text, BitmapSource? Image)
         {
@@ -819,44 +827,107 @@ namespace TopDock
             return formattedText.Width;
         }
 
-        /// <summary>배터리 상태를 3분류로만 표현한다(퍼센트 게이지 없음).
-        /// 일반 상태에서는 노치 테두리를 원래대로 두고, 충전 중 / 배터리 부족일 때만
-        /// 테두리에 상태 색 라이트를 입힌다 — 순수 WPF(Border.BorderBrush)로만 처리하며
-        /// 별도 프로세스나 셰이더를 쓰지 않는다.</summary>
+        /// <summary>배터리는 퍼센트가 아니라 3분류로 다룬다(일반/충전/부족).
+        /// 노치 테두리를 통째로 칠하면 노치에서 가장 밝은 요소가 되어 beam과 색이 섞이므로,
+        /// 안쪽 우측의 작은 점으로만 조용히 알리고 펼치면 퍼센트를 텍스트로 보여준다.</summary>
         private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
         {
             Dispatcher.Invoke(() =>
             {
-                // 배터리 라이트는 접힌 기본 아일랜드에서만 보여준다.
-                // SwitchViewMode도 다른 뷰로 갈 때 테두리를 비우므로 여기서도 같은 기준을 지킨다
-                // (지키지 않으면 확장 뷰에서 5초마다 배터리 색이 되살아난다).
-                if (_currentViewMode != ViewMode.IdleCompact) return;
+                _batteryPercent = e.BatteryPercent;
 
-                bool isNormal = !e.IsCharging && e.BatteryPercent > 0.20f;
+                var level = e.IsCharging
+                    ? BatteryLevel.Charging
+                    : e.BatteryPercent <= 0.20f ? BatteryLevel.Low : BatteryLevel.Normal;
 
-                if (isNormal)
+                // 상태가 실제로 바뀐 순간에만 한 번 밝게 깜빡인다(꽂는 순간의 체감).
+                bool flash = level != _batteryLevel && level != BatteryLevel.Normal;
+                _batteryLevel = level;
+
+                ApplyBatteryIndicator(flash);
+            });
+        }
+
+        /// <summary>현재 뷰와 배터리 상태에 맞춰 점·퍼센트를 다시 그린다. 뷰 전환에서도 호출된다.</summary>
+        private void ApplyBatteryIndicator(bool flash = false)
+        {
+            // 일반 상태에서는 아무것도 그리지 않는다 — 조용한 게 기본값.
+            if (_batteryLevel == BatteryLevel.Normal)
+            {
+                BatteryDot.Visibility = Visibility.Collapsed;
+                BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
+                BatteryDot.Opacity = 1;
+                _batteryPulseRunning = false;
+                ExpandedBatteryPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            Color accent = _batteryLevel == BatteryLevel.Charging
+                ? Color.FromRgb(0x34, 0xC7, 0x59)   // 충전 중 — 애플 그린
+                : Color.FromRgb(0xFF, 0x45, 0x3A);  // 배터리 부족 — 애플 레드
+
+            var core = new SolidColorBrush(accent);
+            core.Freeze();
+            var glow = new RadialGradientBrush
+            {
+                Center = new Point(0.5, 0.5),
+                GradientOrigin = new Point(0.5, 0.5),
+                RadiusX = 0.5,
+                RadiusY = 0.5,
+            };
+            glow.GradientStops.Add(new GradientStop(accent, 0.0));
+            glow.GradientStops.Add(new GradientStop(Color.FromArgb(0, accent.R, accent.G, accent.B), 1.0));
+            glow.Freeze();
+
+            BatteryDotCore.Fill = core;
+            BatteryDotGlow.Fill = glow;
+            ExpandedBatteryDot.Fill = core;
+
+            // 점은 접힌 기본 아일랜드에서만, 퍼센트 텍스트는 펼친 화면에서만.
+            BatteryDot.Visibility = _currentViewMode == ViewMode.IdleCompact
+                ? Visibility.Visible : Visibility.Collapsed;
+            ExpandedBatteryPanel.Visibility = _currentViewMode == ViewMode.IdleExpanded
+                ? Visibility.Visible : Visibility.Collapsed;
+            ExpandedBatteryText.Text =
+                $"{(_batteryLevel == BatteryLevel.Charging ? "충전" : "부족")} {Math.Round(_batteryPercent * 100)}%";
+
+            if (flash)
+            {
+                // 꽂는 순간: 밝게 나타났다가 잠깐 어두워지고, 끝나면 pulse로 넘어간다.
+                BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
+                BatteryDot.Opacity = 1;
+                var blink = new DoubleAnimation(1.0, 0.35, new Duration(TimeSpan.FromMilliseconds(260)))
                 {
-                    // 일반 상태 — DarkNotchStyle의 원래 테두리로 되돌린다.
-                    NotchBorder.ClearValue(Border.BorderBrushProperty);
-                    return;
-                }
-
-                Color accent = e.IsCharging
-                    ? Color.FromRgb(57, 255, 20)   // 충전 중 — 녹색 라이트
-                    : Color.FromRgb(255, 59, 48);  // 배터리 부족 — 적색 라이트
-
-                // 원본 DarkNotchStyle과 같은 세로 결로 살짝 흐려지게 해서
-                // 1px 림 위에 상태 색이 자연스럽게 얹히게 한다.
-                var brush = new LinearGradientBrush
-                {
-                    StartPoint = new Point(0.5, 0),
-                    EndPoint = new Point(0.5, 1),
+                    AutoReverse = true,
                 };
-                brush.GradientStops.Add(new GradientStop(accent, 0.0));
-                brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, accent.R, accent.G, accent.B), 1.0));
-                brush.Freeze();
+                blink.Completed += (_, _) => StartBatteryPulse();
+                BatteryDot.BeginAnimation(UIElement.OpacityProperty, blink);
+            }
+            else
+            {
+                StartBatteryPulse();
+            }
+        }
 
-                NotchBorder.BorderBrush = brush;
+        /// <summary>충전 중에만 은은하게 숨쉬게 한다. 부족은 고정 — 경고가 흔들리면 거슬린다.</summary>
+        private void StartBatteryPulse()
+        {
+            bool shouldPulse = _batteryLevel == BatteryLevel.Charging;
+            if (shouldPulse == _batteryPulseRunning) return;
+
+            _batteryPulseRunning = shouldPulse;
+            BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
+            BatteryDot.Opacity = 1;
+            if (!shouldPulse) return;
+
+            BatteryDot.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
+            {
+                From = 0.45,
+                To = 1.0,
+                Duration = new Duration(TimeSpan.FromSeconds(1.8)),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             });
         }
 
@@ -990,14 +1061,8 @@ namespace TopDock
             SetViewActive(activeView, duration, ease);
             NotchBorder.CornerRadius = new CornerRadius(targetRadius);
 
-            if (mode != ViewMode.IdleCompact)
-            {
-                NotchBorder.ClearValue(Border.BorderBrushProperty);
-            }
-            else
-            {
-                _batteryService.ForceUpdate();
-            }
+            // 배터리 표시는 뷰에 따라 자리만 바뀐다 — 접힌 아일랜드는 점, 펼치면 퍼센트.
+            ApplyBatteryIndicator();
 
             bool expanding = targetWidth > NotchBorder.Width;
             duration = new Duration(TimeSpan.FromMilliseconds(expanding ? 520 : 380));
