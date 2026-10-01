@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -30,10 +32,9 @@ namespace TopDock
         private const int WM_NCHITTEST = 0x0084;
         private const int HTTRANSPARENT = -1;
 
-        private const double VolumeBarExtraHeight = 54;
-
         // AI 비서 전역 핫키: Ctrl+Shift+Space
         private const int HOTKEY_ID_ASSISTANT = 0xB00B;
+        private const int HOTKEY_ID_CLIPBOARD = 0xB00C;   // Ctrl+Shift+V
         private const uint MOD_CONTROL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
         private const uint MOD_NOREPEAT = 0x4000;
@@ -63,6 +64,66 @@ namespace TopDock
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
+        // 클립보드 항목 클릭 → 직전 창에 붙여넣기 주입용
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        private const uint INPUT_KEYBOARD = 1;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const ushort VK_CONTROL = 0x11;
+        private const ushort VK_V = 0x56;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct INPUT
+        {
+            public uint type;
+            public InputUnion u;
+        }
+
+        // SendInput은 실제 구조체 크기와 cbSize가 다르면 아무것도 보내지 않는다 —
+        // 쓰지 않는 멤버까지 정의해 x86/x64 양쪽에서 크기를 맞춘다.
+        [StructLayout(LayoutKind.Explicit)]
+        private struct InputUnion
+        {
+            [FieldOffset(0)] public MOUSEINPUT mi;
+            [FieldOffset(0)] public KEYBDINPUT ki;
+            [FieldOffset(0)] public HARDWAREINPUT hi;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOUSEINPUT
+        {
+            public int dx, dy;
+            public uint mouseData, dwFlags, time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KEYBDINPUT
+        {
+            public ushort wVk, wScan;
+            public uint dwFlags, time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct HARDWAREINPUT
+        {
+            public uint uMsg;
+            public ushort wParamL, wParamH;
+        }
+
         private readonly AudioService _audioService;
         private readonly MediaService _mediaService;
         private readonly LyricsService _lyricsService;
@@ -83,20 +144,37 @@ namespace TopDock
         private BatteryLevel _batteryLevel = BatteryLevel.Normal;
         private float _batteryPercent = -1f;
         private bool _batteryPulseRunning;
-        // 클립보드 히스토리 (최근 5개, 최신이 앞; 텍스트/이미지 혼합)
-        private sealed record ClipboardItem(string Text, BitmapSource? Image)
+        // 클립보드 히스토리 한 항목 — 텍스트 / 이미지 / 파일 중 하나 (최근 5개, 최신이 앞)
+        private sealed class ClipboardItem
         {
+            public ClipboardItem(string text, BitmapSource? image, string[]? files = null)
+            {
+                Text = text;
+                Image = image;
+                Files = files;
+            }
+
+            public string Text { get; }
+            public BitmapSource? Image { get; }
+            public string[]? Files { get; }
+            public BitmapSource? Thumbnail { get; set; }   // 목록 미리보기용 축소본 (지연 생성)
+
             public bool IsImage => Image != null;
+            public bool IsFiles => Files is { Length: > 0 };
         }
 
+        private const int HistoryLimit = 5;
+
         private readonly List<ClipboardItem> _clipboardHistory = new();
-        private readonly Image?[] _rowImages = new Image?[5];
         private DispatcherTimer? _clipboardToastTimer;
 
-        // 캡처 도구가 클립보드를 연속 기록하며 생기는 중복 이미지 이벤트 필터용
-        private DateTime _lastImageCaptureAt = DateTime.MinValue;
-        // 행 클릭 등 앱 스스로 클립보드에 쓸 때 자기 복사를 새 항목으로 오판하지 않게 하는 플래그
-        private bool _suppressNextClipboardEvent;
+        // 붙여넣기 대상: 복사가 일어난 순간의 전경 창
+        private IntPtr _pasteTargetHwnd;
+        private bool _pasteInFlight;
+
+        // 앱이 스스로 클립보드에 쓴 내용의 지문 — 이벤트가 안 오더라도 다음 정상 복사를 삼키지 않게 한다
+        private string? _selfCopySignature;
+        private DateTime _selfCopyAt = DateTime.MinValue;
 
         private readonly DispatcherTimer _progressTimer;
         private readonly DispatcherTimer _clockTimer;
@@ -104,6 +182,11 @@ namespace TopDock
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _emptyMediaDebounceTimer;
         private Storyboard? _eqStoryboard;
+
+        // 이퀄라이저 바는 테두리 빛과 같은 색을 쓴다 — 브러시 하나를 세 바가 공유하고 색만 바꾼다
+        private readonly SolidColorBrush _equalizerBrush = new(EqualizerIdleColor);
+        private Color _equalizerAccent = EqualizerIdleColor;
+        private static readonly Color EqualizerIdleColor = Color.FromRgb(0xF0, 0xF3, 0xF8);
 
         // 트랙 전환 사이 SMTC가 잠깐 보고하는 빈 미디어를 필터링하기 위한 유예 시간
         private static readonly TimeSpan EmptyMediaDebounceDelay = TimeSpan.FromMilliseconds(1500);
@@ -126,6 +209,11 @@ namespace TopDock
         {
             InitializeComponent();
             StartStatusSheen(); // 상태 텍스트 광택 스윕 (원작 thinking-orbs 디테일)
+
+            // 세 바가 브러시 하나를 공유 — UpdateEqualizerAccent가 색만 갈아 끼우면 전부 바뀐다
+            EqBar1.Background = _equalizerBrush;
+            EqBar2.Background = _equalizerBrush;
+            EqBar3.Background = _equalizerBrush;
 
             ConfigService.Load();
 
@@ -184,6 +272,35 @@ namespace TopDock
                 if (_assistantBusy) _assistantCts?.Cancel();
                 CloseAssistant();
                 e.Handled = true;
+                return;
+            }
+
+            // 클립보드 기록 패널 키보드 조작 — ↑↓ 이동 / Enter 붙여넣기 / Delete 삭제 / Esc 닫기
+            if (_clipboardHistoryOpen)
+            {
+                switch (e.Key)
+                {
+                    case Key.Escape:
+                        HideClipboardHistoryPanel();
+                        e.Handled = true;
+                        break;
+                    case Key.Up:
+                        MoveClipboardSelection(-1);
+                        e.Handled = true;
+                        break;
+                    case Key.Down:
+                        MoveClipboardSelection(1);
+                        e.Handled = true;
+                        break;
+                    case Key.Delete:
+                        RemoveSelectedFromHistory();
+                        e.Handled = true;
+                        break;
+                    case Key.Enter:
+                        ActivateClipboardSelection();
+                        e.Handled = true;
+                        break;
+                }
             }
         }
 
@@ -199,6 +316,10 @@ namespace TopDock
             source?.AddHook(WndProc);
 
             AddClipboardFormatListener(hwnd);
+
+            // 복사 기록을 어디서든 꺼내는 전역 단축키 (Ctrl+Shift+V)
+            if (!RegisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x56))
+                Log.Warn("Clipboard hotkey Ctrl+Shift+V is already taken by another app");
 
             // AI 비서 전역 핫키 등록 (Ctrl+Shift+Space)
             if (ConfigService.Current.AssistantEnabled)
@@ -216,38 +337,14 @@ namespace TopDock
                 Dispatcher.Invoke(OpenAssistant);
                 return (IntPtr)1;
             }
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID_CLIPBOARD)
+            {
+                Dispatcher.Invoke(ToggleClipboardHistory);
+                return (IntPtr)1;
+            }
             if (msg == WM_CLIPBOARDUPDATE)
             {
-                try
-                {
-                    // 행 클릭 재복사 등 앱이 스스로 쓴 클립보드는 무시
-                    if (_suppressNextClipboardEvent)
-                    {
-                        _suppressNextClipboardEvent = false;
-                        return IntPtr.Zero;
-                    }
-
-                    // Win+Shift+S 캡처 등 이미지 우선, 없으면 텍스트
-                    if (Clipboard.ContainsImage())
-                    {
-                        var image = Clipboard.GetImage();
-                        if (image != null)
-                        {
-                            image.Freeze();
-                            Dispatcher.InvokeAsync(() => ShowClipboardToast(new ClipboardItem(string.Empty, image)));
-                        }
-                    }
-                    else if (Clipboard.ContainsText())
-                    {
-                        string text = Clipboard.GetText();
-                        // 빈 문자열/공백만 있는 복사는 토스트와 히스토리 모두에서 제외
-                        if (!string.IsNullOrWhiteSpace(text))
-                        {
-                            Dispatcher.InvokeAsync(() => ShowClipboardToast(new ClipboardItem(text, null)));
-                        }
-                    }
-                }
-                catch { }
+                HandleClipboardUpdate();
             }
             if (msg == WM_NCHITTEST)
             {
@@ -262,7 +359,15 @@ namespace TopDock
                         return (IntPtr)HTTRANSPARENT;
                     }
 
-                    Point pt = NotchBorder.PointFromScreen(new Point(x, y));
+                    var screenPoint = new Point(x, y);
+
+                    // 기록패널은 노치 밖에 떠있지만 클릭을 받아야 한다
+                    if (IsInside(ClipboardHistoryPanel, screenPoint))
+                    {
+                        return IntPtr.Zero;
+                    }
+
+                    Point pt = NotchBorder.PointFromScreen(screenPoint);
 
                     if (pt.X < 0 || pt.Y < 0 || pt.X > NotchBorder.ActualWidth || pt.Y > NotchBorder.ActualHeight)
                     {
@@ -279,78 +384,338 @@ namespace TopDock
             return IntPtr.Zero;
         }
 
-        private void ShowClipboardToast(ClipboardItem item)
+        /// <summary>화면 좌표가 이 요소의 실제 렌더 영역 안인가 (보이지 않으면 false).</summary>
+        private static bool IsInside(FrameworkElement element, Point screenPoint)
         {
-            // 히스토리는 토스트 설정과 무관하게 항상 수집 (공백 텍스트는 제외)
-            if (item.IsImage)
-            {
-                // Win+Shift+S 등 캡처 도구는 형식별로 클립보드를 연속 기록해서
-                // 업데이트 이벤트가 짧은 간격으로 여러 번 온다 → 0.8초 내 연속 이미지는 1장으로 합침
-                var now = DateTime.UtcNow;
-                if (now - _lastImageCaptureAt < TimeSpan.FromMilliseconds(800)) return;
-                _lastImageCaptureAt = now;
+            if (element.Visibility != Visibility.Visible) return false;
+            if (element.ActualWidth < 1 || element.ActualHeight < 1) return false;
 
+            try
+            {
+                Point pt = element.PointFromScreen(screenPoint);
+                return pt.X >= 0 && pt.Y >= 0 && pt.X <= element.ActualWidth && pt.Y <= element.ActualHeight;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 클립보드가 바뀔 때마다 불린다. 읽기는 한 번만 하고(다른 앱과의 잠금 경쟁 최소화)
+        /// 우리 앱이 쓴 내용이면 무시한 뒤, 표시는 UI 쪽으로 넘긴다.
+        /// </summary>
+        private void HandleClipboardUpdate()
+        {
+            ClipboardItem? item = ReadClipboard();
+            if (item == null) return;
+
+            // 방금 앱이 스스로 쓴 내용(항목 클릭 → 재복사)은 새 항목으로 잡지 않는다
+            if (IsSelfCopy(item)) return;
+
+            // 붙여넣기 대상은 '복사가 일어난 순간'의 전경 창 — 노치가 아니라 사용자가 쓰던 앱이어야 한다
+            IntPtr foreground = GetForegroundWindow();
+            if (foreground != IntPtr.Zero && foreground != new WindowInteropHelper(this).Handle)
+                _pasteTargetHwnd = foreground;
+
+            Dispatcher.InvokeAsync(() => ShowClipboardToast(item));
+        }
+
+        /// <summary>
+        /// 클립보드를 한 번만 열이 이미지 / 파일 / 텍스트를 읽는다.
+        /// (기존에는 Contains→Get을 형식마다 반복해 OpenClipboard를 4번 시도했다)
+        /// </summary>
+        private static ClipboardItem? ReadClipboard()
+        {
+            // 다른 앱이 클립보드를 쥐고 있으면 열기가 실패한다 — 짧게 재시도 (최대 ~75ms)
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
                 try
                 {
-                    AddToHistory(item);
+                    System.Windows.IDataObject? data = Clipboard.GetDataObject();
+                    if (data == null) return null;
+
+                    // Win+Shift+S 캡처 등 이미지가 본체인 경우 → 이미지 우선 (기존 동작 유지)
+                    if (data.GetDataPresent(DataFormats.Bitmap) && data.GetData(DataFormats.Bitmap) is BitmapSource image)
+                    {
+                        image.Freeze();   // 해시·썸네일 계산 전에 동결해야 안전하다
+                        return new ClipboardItem(string.Empty, image);
+                    }
+
+                    // 탐색기 파일 복사(CF_HDROP) — 그동안 조용히 무시되던 형식
+                    if (data.GetDataPresent(DataFormats.FileDrop)
+                        && data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
+                    {
+                        return new ClipboardItem(string.Empty, null, files);
+                    }
+
+                    // 빈 문자열/공백만 있는 복사는 히스토리에서도 제외
+                    if (data.GetDataPresent(DataFormats.UnicodeText)
+                        && data.GetData(DataFormats.UnicodeText) is string text && !string.IsNullOrWhiteSpace(text))
+                    {
+                        return new ClipboardItem(text, null);
+                    }
+
+                    return null;
                 }
-                catch (Exception ex)
+                catch (COMException)
                 {
-                    // 해시 계산 실패 등 예외가 토스트까지 끊지 않도록 방어
-                    System.Diagnostics.Debug.WriteLine($"Clipboard image history error: {ex.Message}");
+                    Thread.Sleep(25);   // 클립보드 잠금 경쟁
+                }
+                catch
+                {
+                    return null;
                 }
             }
-            else if (!string.IsNullOrWhiteSpace(item.Text))
+            return null;
+        }
+
+        /// <summary>내용 지문 — 우리가 쓴 클립보드를 되읽지 않기 위한 비교용. 계산 불가면 null.</summary>
+        private static string? Signature(ClipboardItem item)
+        {
+            if (item.IsImage && item.Image != null)
             {
-                AddToHistory(item);
+                byte[] hash = ComputeImageHash(item.Image);
+                return hash.Length == 0 ? null : "i:" + Convert.ToBase64String(hash);
             }
-            else
+            if (item.IsFiles) return "f:" + string.Join('\n', item.Files!);
+            return "t:" + item.Text;
+        }
+
+        private bool IsSelfCopy(ClipboardItem item)
+        {
+            if (_selfCopySignature == null) return false;
+            if (DateTime.UtcNow - _selfCopyAt > TimeSpan.FromSeconds(2)) return false;
+            try { return Signature(item) == _selfCopySignature; }
+            catch { return false; }
+        }
+
+        private void ShowClipboardToast(ClipboardItem item)
+        {
+            // 히스토리는 토스트 설정과 무관하게 항상 수집한다
+            AddToHistory(item);
+
+            if (!ConfigService.Current.ShowClipboardToast) return;
+            // 복사는 노치 안에서만 조용히 알린다
+            // 기록패널이 열려있으면 목록만 갱신한다
+            if (_clipboardHistoryOpen)
             {
+                BuildClipboardHistoryRows();
                 return;
             }
 
-            if (!ConfigService.Current.ShowClipboardToast) return;
-
-            // 캡처/복사 알림은 노치 본체 텍스트를 건드리지 않고 —
-            // 항상 오른쪽으로 붙어 늘어나는 캡슐 하나로만 표시한다 (모든 뷰 공통, 통일성).
-            // 캡처 즉시 캡슐이 뜨고, 캡슐을 클릭하면 기록 패널(오른쪽 아래 펼침)로 이어진다.
-            string sideText = item.IsImage
-                ? $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
-                : (item.Text.Length > 22 ? item.Text[..22] + "…" : item.Text);
-            ShowClipboardSideCapsule(sideText);
-
-            // Task.Delay 대신 재시작 가능한 일회성 타이머로 연속 복사 시 경쟁 상태 제거
-            if (_clipboardToastTimer == null)
-            {
-                _clipboardToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-                _clipboardToastTimer.Tick += ClipboardToastTimer_Tick;
-            }
-            _clipboardToastTimer.Stop();
-            _clipboardToastTimer.Start();
+            ShowClipboardFeedback();
         }
 
         private void AddToHistory(ClipboardItem item)
         {
-            // 텍스트 중복 제거: 같은 텍스트는 맨 위로 올림
-            if (!item.IsImage)
+            // 중복은 새로 쌓지 않고 맨 위로 올린다 (이미지는 픽셀 해시 비교 — 캡처를 여러 번 떠도 1장만 유지)
+            if (item.IsImage && item.Image != null)
             {
-                _clipboardHistory.RemoveAll(i => !i.IsImage && i.Text == item.Text);
-            }
-            else
-            {
-                // 이미지도 같은 그림이면 맨 위로 (픽셀 해시 비교 — 캡처를 여러 번 떠도 1장만 유지)
-                byte[] newHash = ComputeImageHash(item.Image!);
+                byte[] newHash = ComputeImageHash(item.Image);
                 _clipboardHistory.RemoveAll(i =>
                 {
                     if (!i.IsImage || i.Image == null) return false;
-                    byte[] oldHash = ComputeImageHash(i.Image);
-                    return HashEquals(oldHash, newHash);
+                    return HashEquals(ComputeImageHash(i.Image), newHash);
                 });
+            }
+            else if (item.IsFiles)
+            {
+                string key = string.Join('\n', item.Files!);
+                _clipboardHistory.RemoveAll(i => i.IsFiles && string.Join('\n', i.Files!) == key);
+            }
+            else
+            {
+                _clipboardHistory.RemoveAll(i => !i.IsImage && !i.IsFiles && i.Text == item.Text);
             }
 
             _clipboardHistory.Insert(0, item);
-            if (_clipboardHistory.Count > 5) _clipboardHistory.RemoveAt(5);
+            if (_clipboardHistory.Count > HistoryLimit) _clipboardHistory.RemoveAt(HistoryLimit);
+            _clipboardSelectedIndex = -1;
         }
+
+        private static string ClipboardRowLabel(ClipboardItem item)
+        {
+            if (item.IsImage) return $"캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}";
+            if (item.IsFiles)
+            {
+                string? name = SafeFileName(item.Files![0]);
+                return item.Files.Length == 1 ? name : $"{name} 외 {item.Files.Length - 1}개 파일";
+            }
+            return Collapse(item.Text, 120);
+        }
+
+        private static string SafeFileName(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return "파일";
+            string name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+            return string.IsNullOrEmpty(name) ? path : name;
+        }
+
+        /// <summary>공백(개행·탭 포함)을 단일 공백으로 접고 max자에서 자른다.</summary>
+        private static string Collapse(string text, int max)
+        {
+            const int ScanLimit = 512;   // 아주 큰 텍스트는 앞부분만 본다
+            int consumed = Math.Min(text.Length, ScanLimit);
+            var sb = new StringBuilder(consumed);
+            bool pendingSpace = false;
+            for (int i = 0; i < consumed; i++)
+            {
+                char c = text[i];
+                if (char.IsWhiteSpace(c)) { pendingSpace = sb.Length > 0; continue; }
+                if (pendingSpace) { sb.Append(' '); pendingSpace = false; }
+                sb.Append(c);
+            }
+
+            bool truncated = text.Length > consumed;
+            string collapsed = sb.ToString();
+            if (collapsed.Length > max)
+            {
+                collapsed = collapsed[..max];
+                truncated = true;
+            }
+            return truncated ? collapsed + "…" : collapsed;
+        }
+
+        /// <summary>목록 미리보기용 축소본. 원본은 재복사 정확도를 위해 그대로 보관한다.</summary>
+        private static BitmapSource? ThumbnailFor(ClipboardItem item)
+        {
+            if (item.Thumbnail != null || item.Image == null) return item.Thumbnail;
+
+            const int MaxSide = 96;
+            try
+            {
+                var image = item.Image;
+                double scale = Math.Min(1.0, (double)MaxSide / Math.Max(image.PixelWidth, image.PixelHeight));
+                BitmapSource thumb = scale >= 1.0
+                    ? image
+                    : new TransformedBitmap(image, new ScaleTransform(scale, scale));
+                thumb.Freeze();
+                item.Thumbnail = thumb;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Clipboard thumbnail failed: {ex.Message}");
+            }
+            return item.Thumbnail;
+        }
+
+        /// <summary>항목을 클립보드에 올린다. 다른 앱이 쥐고 있으면 짧게 재시도.</summary>
+        private bool CopyToClipboard(ClipboardItem item)
+        {
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                try
+                {
+                    if (item.IsImage && item.Image != null)
+                    {
+                        Clipboard.SetImage(item.Image);
+                    }
+                    else if (item.IsFiles)
+                    {
+                        var list = new StringCollection();
+                        list.AddRange(item.Files!);
+                        Clipboard.SetFileDropList(list);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(item.Text))
+                    {
+                        Clipboard.SetText(item.Text);
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    _selfCopySignature = Signature(item);
+                    _selfCopyAt = DateTime.UtcNow;
+                    return true;
+                }
+                catch (COMException)
+                {
+                    Thread.Sleep(25);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            Log.Warn("Clipboard copy failed: clipboard locked by another app");
+            return false;
+        }
+
+        /// <summary>항목 사용: 클립보드에 올리고 → 최근 순서 맨 앞으로 → 직전 창에 붙여넣기.</summary>
+        private void UseClipboardItem(ClipboardItem item)
+        {
+            if (!CopyToClipboard(item)) return;
+
+            // 재사용한 항목도 최근 순서 맨 앞으로 (다시 쓰기 쉬운 위치로)
+            _clipboardHistory.Remove(item);
+            _clipboardHistory.Insert(0, item);
+            _clipboardSelectedIndex = -1;
+
+            HideClipboardHistoryPanel();
+            PasteIntoPasteTarget();
+        }
+
+        /// <summary>직전 창으로 포커스를 돌린 뒤 Ctrl+V를 주입한다. 실패하면 복사만 남긴다.</summary>
+        private async void PasteIntoPasteTarget()
+        {
+            IntPtr target = _pasteTargetHwnd;
+            if (_pasteInFlight || target == IntPtr.Zero || !IsWindow(target))
+            {
+                // 붙여넣을 창을 모를 때(복사 순간에 전경 창이 없었을 때) — 복사만 해 둔다
+                Log.Info("Clipboard paste: no target window, kept clipboard only");
+                return;
+            }
+
+            _pasteInFlight = true;
+            try
+            {
+                // 전경 창 전환은 비동기라 실제로 넘어갈 때까지 짧게 기다린다 (최대 ~300ms)
+                for (int i = 0; i < 12 && GetForegroundWindow() != target; i++)
+                {
+                    SetForegroundWindow(target);
+                    await Task.Delay(25);
+                }
+
+                if (GetForegroundWindow() != target)
+                {
+                    // 정책상 포커스를 되찾지 못한 경우 — 복사는 이미 됐으므로 사용자가 직접 Ctrl+V 하면 된다
+                    Log.Info("Clipboard paste: target refused focus, kept clipboard only");
+                    return;
+                }
+
+                await Task.Delay(60);   // 활성화 직후 앱이 키 입력을 받을 준비를 할 여유
+                SendCtrlV();
+                Log.Info("Clipboard paste: Ctrl+V sent");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Clipboard paste failed: {ex.Message}");
+            }
+            finally
+            {
+                _pasteInFlight = false;
+            }
+        }
+
+        private static void SendCtrlV()
+        {
+            var inputs = new[]
+            {
+                KeyInput(VK_CONTROL, down: true),
+                KeyInput(VK_V, down: true),
+                KeyInput(VK_V, down: false),
+                KeyInput(VK_CONTROL, down: false),
+            };
+            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        }
+
+        private static INPUT KeyInput(ushort vk, bool down) => new()
+        {
+            type = INPUT_KEYBOARD,
+            u = new InputUnion { ki = new KEYBDINPUT { wVk = vk, dwFlags = down ? 0u : KEYEVENTF_KEYUP } },
+        };
 
         // 이미지 저해상도 평균 해시 (aHash): 크기/포맷이 달라도 같은 그림이면 같은 해시
         private static byte[] ComputeImageHash(BitmapSource image)
@@ -409,14 +774,72 @@ namespace TopDock
         private void ClipboardToastTimer_Tick(object? sender, EventArgs e)
         {
             _clipboardToastTimer!.Stop();
-            HideClipboardSideCapsule();
+            HideClipboardFeedback();
         }
 
-        // ── 클립보드 기록 패널: 캡슐 클릭 → 오른쪽 아래로 펼쳐지는 최근 5개 ──
+        // ── 복사 피드백: 아일랜드 안쪽 배지 + 가장자리 빛 펄스 ──
+
+        /// <summary>복사 직후의 조용한 알림 — 떠 있는 창을 뛰우지 않고 노치 안에서만 알린다.</summary>
+        private void ShowClipboardFeedback()
+        {
+            ClipboardFeedbackChip.Visibility = Visibility.Visible;
+            ClipboardFeedbackChip.BeginAnimation(UIElement.OpacityProperty, null);
+            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 4 };
+            var fadeIn = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(130))) { EasingFunction = ease };
+            var popIn = new DoubleAnimation(0.65, 1, new Duration(TimeSpan.FromMilliseconds(240))) { EasingFunction = ease };
+            Timeline.SetDesiredFrameRate(fadeIn, 60);
+            Timeline.SetDesiredFrameRate(popIn, 60);
+            ClipboardFeedbackChip.BeginAnimation(UIElement.OpacityProperty, fadeIn);
+            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleXProperty, popIn);
+            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleYProperty, popIn);
+
+            // 가장자리 빛 펄스 — 복사된 것을 "빛으로" 알린다
+            var flash = new DoubleAnimationUsingKeyFrames();
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)))
+            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 3 } });
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(380))));
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1100)))
+            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 2 } });
+            Timeline.SetDesiredFrameRate(flash, 60);
+            NotchBeam.BeginAnimation(Controls.BorderBeam.FlashProperty, flash);
+
+            // 재시작 가능한 일회성 타이머 — 연속 복사 시 경쟁 상태 없이 사라지는 시점만 미룬다
+            if (_clipboardToastTimer == null)
+            {
+                _clipboardToastTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1300) };
+                _clipboardToastTimer.Tick += ClipboardToastTimer_Tick;
+            }
+            _clipboardToastTimer.Stop();
+            _clipboardToastTimer.Start();
+        }
+
+        private void HideClipboardFeedback()
+        {
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 3 };
+            var fade = new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = ease };
+            Timeline.SetDesiredFrameRate(fade, 60);
+            fade.Completed += (s, e) =>
+            {
+                // 그사이 또 복사됐으면 그대로 둔다
+                if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
+                    ClipboardFeedbackChip.Visibility = Visibility.Collapsed;
+            };
+            ClipboardFeedbackChip.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
+
+        // 복사 알림 · 기록패널 (Ctrl+Shift+V)
 
         private bool _clipboardHistoryOpen;
 
-        private void ClipboardSideCapsule_Click(object sender, MouseButtonEventArgs e)
+        // 키보드(↑↓/Enter/Delete)로 고른 항목 — -1이면 선택 없음
+        private int _clipboardSelectedIndex = -1;
+
+        /// <summary>기록 패널 열기/닫기 — 단축키와 노치 클릭이 공유하는 입구.</summary>
+        private void ToggleClipboardHistory()
         {
             if (_clipboardHistoryOpen)
             {
@@ -426,6 +849,16 @@ namespace TopDock
             {
                 ShowClipboardHistoryPanel();
             }
+        }
+
+        /// <summary>기록 패널을 연다 — 노치 아래 중앙에 내려온다.</summary>
+        /// <summary>노치 본체 클릭 → 기록 열기/닫기. 확장 뷰의 버튼들은 자기 클릭을 먼저 처리한다.</summary>
+        private void Notch_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (_currentViewMode == ViewMode.Assistant) return;   // 대화 중엔 입력을 가로채지 않는다
+            if (_clipboardHistory.Count == 0) return;
+
+            ToggleClipboardHistory();
             e.Handled = true;
         }
 
@@ -433,12 +866,13 @@ namespace TopDock
         {
             BuildClipboardHistoryRows();
             _clipboardHistoryOpen = true;
-            RepositionClipboardHistoryPanel();
 
-            // 캡슐 타이머 정지 — 기록을 보는 동안 캡슐이 사라지지 않게
             _clipboardToastTimer?.Stop();
 
             ClipboardHistoryPanel.Visibility = Visibility.Visible;
+            // 먼저 배치해야 패널 실제 크기가 나온다 — 그 전에 계산하면 좌상단(0,0)에 붙는다
+            ClipboardHistoryPanel.UpdateLayout();
+            RepositionClipboardHistoryPanel();
             var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
             var dur = new Duration(TimeSpan.FromMilliseconds(280));
             var opacity = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
@@ -468,236 +902,181 @@ namespace TopDock
         private void BuildClipboardHistoryRows()
         {
             ClipboardHistoryRows.Children.Clear();
-            int count = Math.Min(_clipboardHistory.Count, 5);
+            int count = Math.Min(_clipboardHistory.Count, HistoryLimit);
             for (int i = 0; i < count; i++)
             {
-                ClipboardItem item = _clipboardHistory[i];
-                string label = item.IsImage
-                    ? $"🖼 캡처 {item.Image!.PixelWidth}×{item.Image.PixelHeight}"
-                    : (item.Text.Length > 28 ? item.Text[..28].ReplaceLineEndings(" ") + "…" : item.Text.ReplaceLineEndings(" "));
-
-                var rowBorder = new Border
-                {
-                    Background = Brushes.Transparent,
-                    CornerRadius = new CornerRadius(9),
-                    Padding = new Thickness(10, 6, 10, 6),
-                    Cursor = System.Windows.Input.Cursors.Hand,
-                    Tag = item,
-                };
-                rowBorder.MouseLeftButtonUp += ClipboardHistoryRow_Click;
-                rowBorder.MouseEnter += (s, e) => rowBorder.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
-                rowBorder.MouseLeave += (s, e) => rowBorder.Background = Brushes.Transparent;
-
-                var text = new TextBlock
-                {
-                    Text = label,
-                    Foreground = new SolidColorBrush(Color.FromArgb(0xE5, 0xFF, 0xFF, 0xFF)),
-                    FontSize = 12,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                };
-                rowBorder.Child = text;
-                ClipboardHistoryRows.Children.Add(rowBorder);
+                ClipboardHistoryRows.Children.Add(BuildClipboardHistoryRow(_clipboardHistory[i], i));
             }
         }
+
+        private Border BuildClipboardHistoryRow(ClipboardItem item, int index)
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            // 이미지 항목은 썸네일로 — 캡처가 여러 장이어도 구분된다
+            BitmapSource? thumb = ThumbnailFor(item);
+            if (thumb != null)
+            {
+                var preview = new Image
+                {
+                    Source = thumb,
+                    Height = 30,
+                    MaxWidth = 48,
+                    Stretch = Stretch.Uniform,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 9, 0),
+                    IsHitTestVisible = false,
+                };
+                RenderOptions.SetBitmapScalingMode(preview, BitmapScalingMode.HighQuality);
+                Grid.SetColumn(preview, 0);
+                grid.Children.Add(preview);
+            }
+
+            var text = new TextBlock
+            {
+                Text = ClipboardRowLabel(item),
+                Foreground = new SolidColorBrush(Color.FromArgb(0xE5, 0xFF, 0xFF, 0xFF)),
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            Grid.SetColumn(text, 1);
+            grid.Children.Add(text);
+
+            // 개별 삭제 — 호버할 때만 보이는 최소 표시
+            var remove = new TextBlock
+            {
+                Text = "✕",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 2, 0),
+                Cursor = Cursors.Hand,
+                Opacity = 0,
+                ToolTip = "이 항목 삭제",
+            };
+            remove.MouseLeftButtonUp += (s, e) =>
+            {
+                e.Handled = true;   // 행 클릭(붙여넣기)으로 번지지 않게
+                RemoveFromHistory(item);
+            };
+            Grid.SetColumn(remove, 2);
+            grid.Children.Add(remove);
+
+            var row = new Border
+            {
+                Background = index == _clipboardSelectedIndex ? SelectedRowBrush : Brushes.Transparent,
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(9, 5, 9, 5),
+                Margin = new Thickness(0, 1, 0, 1),
+                Cursor = Cursors.Hand,
+                Tag = item,
+                Child = grid,
+            };
+            row.MouseLeftButtonUp += ClipboardHistoryRow_Click;
+            row.MouseEnter += (s, e) =>
+            {
+                remove.Opacity = 1;
+                row.Background = HoverRowBrush;
+            };
+            row.MouseLeave += (s, e) =>
+            {
+                remove.Opacity = 0;
+                row.Background = index == _clipboardSelectedIndex ? SelectedRowBrush : Brushes.Transparent;
+            };
+            return row;
+        }
+
+        private static readonly Brush HoverRowBrush = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush SelectedRowBrush = new SolidColorBrush(Color.FromArgb(0x33, 0x0A, 0x84, 0xFF));
 
         private void ClipboardHistoryRow_Click(object sender, MouseButtonEventArgs e)
         {
             if (sender is Border border && border.Tag is ClipboardItem item)
             {
-                try
-                {
-                    _suppressNextClipboardEvent = true;
-                    if (item.IsImage && item.Image != null)
-                        Clipboard.SetImage(item.Image);
-                    else if (!string.IsNullOrWhiteSpace(item.Text))
-                        Clipboard.SetText(item.Text);
-                }
-                catch
-                {
-                    _suppressNextClipboardEvent = false;
-                }
-                HideClipboardHistoryPanel();
+                UseClipboardItem(item);
             }
         }
 
-        // ── 클립보드 사이드 캡슐 (본체 오른쪽에서 분리 확장) ──
-
-        private void ShowClipboardSideCapsule(string text)
+        private void RemoveFromHistory(ClipboardItem item)
         {
-            ClipboardSideText.Text = text;
-            // 내용에 맞는 자연 폭을 먼저 확정한다 — Width 애니메이션은 이 값을 목표로 쓴다.
-            // 여유 +14px를 줘야 폰트 메트릭 오차로 글자 끝이 잘리지 않는다 (실측 버그)
-            ClipboardSideCapsule.Width = double.NaN; // Auto로 풀어 측정
-            ClipboardSideCapsule.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double naturalWidth = Math.Max(80, ClipboardSideCapsule.DesiredSize.Width + 14);
+            _clipboardHistory.Remove(item);
+            _clipboardSelectedIndex = -1;
 
-            // 7번 피드백: 물리 크기 정규화 — 175%에서 본 실제 크기를 어느 배율에서든 유지
-            double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
-            double norm = dpiScale > 0 ? Math.Min(1.75 / dpiScale, 2.2) : 1.0;
-            ClipboardSideDpiScale.ScaleX = norm;
-            ClipboardSideDpiScale.ScaleY = norm;
-
-            // 퇴장 잔여값 완전 초기화 (낙하·투명도·폭·변형 통짜 리셋)
-            ResetCapsuleTransforms();
-            // 시작 폭을 고정하고 Visible — Width가 NaN이면 애니메이션 시작값이 무의미해진다
-            ClipboardSideCapsule.Width = naturalWidth * 0.45;
-            ClipboardSideCapsule.Visibility = Visibility.Visible;
-
-            RepositionClipboardSideCapsule();
-
-            // 등장: 노치에서 오른쪽으로 붙어 폭이 자라나는 확장 (ScaleTransform 폐기 — 텍스트 왜곡 없음)
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
-            var dur = new Duration(TimeSpan.FromMilliseconds(420));
-
-            var opacity = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
-            var grow = new DoubleAnimation(naturalWidth * 0.35, naturalWidth, dur) { EasingFunction = ease };
-            grow.Completed += (s, e) =>
+            if (_clipboardHistory.Count == 0)
             {
-                // 애니메이션 후 폭을 Auto로 복원 — 어떤 텍스트 길이든 끝까지 보인다
-                ClipboardSideCapsule.BeginAnimation(FrameworkElement.WidthProperty, null);
-                ClipboardSideCapsule.Width = double.NaN;
-            };
-            Timeline.SetDesiredFrameRate(opacity, 60);
-            Timeline.SetDesiredFrameRate(grow, 60);
-
-            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, opacity);
-            ClipboardSideCapsule.BeginAnimation(FrameworkElement.WidthProperty, grow);
-        }
-
-        // 캡슐 추적 루프: 본체가 애니메이션 중인 동안 매 프레임 위치 재계산
-        private bool _capsuleTrackingActive;
-
-        private void StartCapsuleTracking()
-        {
-            if (_capsuleTrackingActive) return;
-            _capsuleTrackingActive = true;
-            CompositionTarget.Rendering += CapsuleTracking_Rendering;
-        }
-
-        private void StopCapsuleTracking()
-        {
-            if (!_capsuleTrackingActive) return;
-            _capsuleTrackingActive = false;
-            CompositionTarget.Rendering -= CapsuleTracking_Rendering;
-        }
-
-        private void CapsuleTracking_Rendering(object? sender, EventArgs e)
-        {
-            RepositionClipboardSideCapsule();
-        }
-        private void RepositionClipboardSideCapsule()
-        {
-            if (ClipboardSideCapsule.Visibility != Visibility.Visible) return;
-
-            // 노치에서 오른쪽으로 '붙어서' 넓어진 느낌 — 살짝 겹쳐 테두리가 이어지게 한다
-            double gap = -2;
-
-            // 본체가 아직 레이아웃 전(ActualWidth 0)이면 실측 좌표가 화면 좌상단을 가리킨다 —
-            // 이 경우가 시작 직후 캡슐이 좌상단에 뜨던 원인. 선언 폭 기준으로 중앙 오른쪽에 배치한다.
-            if (NotchBorder.ActualWidth < 1 || NotchBorder.ActualHeight < 1)
-            {
-                Canvas.SetLeft(ClipboardSideCapsule, ActualWidth / 2 + NotchBorder.Width / 2 + gap);
-                Canvas.SetTop(ClipboardSideCapsule, 8);
+                HideClipboardHistoryPanel();
                 return;
             }
-
-            try
-            {
-                // 레이아웃 후에는 본체 우측 중앙의 실제 렌더 좌표를 화면 경유로 변환 — DPI·여백 무관 정확.
-                // 스케일 정규화가 RenderTransformOrigin(0,0.5)라 세로 중앙 기준으로 확대되므로
-                // 앵커도 세로 중앙 (ActualHeight/2)으로 잡아야 100% 화면에서 캡슐이 아래로 처지지 않는다 (실측 버그)
-                Point notchRightCenter = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth, NotchBorder.ActualHeight / 2));
-                Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
-                double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-                double scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
-                double dpiNormY = scaleY > 0 ? Math.Min(1.75 / scaleY, 2.2) : 1.0;
-
-                double capsuleHalf = ClipboardSideCapsule.Height / 2;
-                Canvas.SetLeft(ClipboardSideCapsule, (notchRightCenter.X - canvasOrigin.X) / dpi + gap);
-                Canvas.SetTop(ClipboardSideCapsule, (notchRightCenter.Y - canvasOrigin.Y) / scaleY - capsuleHalf);
-            }
-            catch
-            {
-                Canvas.SetLeft(ClipboardSideCapsule, ActualWidth / 2 + NotchBorder.Width / 2 + gap);
-                Canvas.SetTop(ClipboardSideCapsule, 8);
-            }
+            BuildClipboardHistoryRows();
         }
 
-        private void HideClipboardSideCapsule()
+        private void RemoveSelectedFromHistory()
         {
-            HideClipboardHistoryPanel(); // 열려 있던 기록 패널도 함께 닫는다
-
-            StopCapsuleTracking();
-
-            // 오른쪽으로 밀리며 아래로 낙하·소멸하는 버블 퇴장 (11번 피드백)
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 5 };
-            var dur = new Duration(TimeSpan.FromMilliseconds(460));
-
-            var opacity = new DoubleAnimation(0, dur) { EasingFunction = ease };
-            var slide = new DoubleAnimation(30, new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = ease };
-            var drop = new DoubleAnimation
-            {
-                From = 0,
-                To = 56,
-                EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = 2.2 }, // 낙하 가속
-                Duration = new Duration(TimeSpan.FromMilliseconds(460)),
-            };
-            Timeline.SetDesiredFrameRate(opacity, 60);
-            Timeline.SetDesiredFrameRate(slide, 60);
-            Timeline.SetDesiredFrameRate(drop, 60);
-
-            opacity.Completed += (s, e) =>
-            {
-                if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
-                {
-                    ClipboardSideCapsule.Visibility = Visibility.Collapsed;
-                    ResetCapsuleTransforms();
-                }
-            };
-
-            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, opacity);
-            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, slide);
-            ClipboardSideDropTransform.BeginAnimation(TranslateTransform.YProperty, drop);
+            if (_clipboardSelectedIndex < 0 || _clipboardSelectedIndex >= _clipboardHistory.Count) return;
+            RemoveFromHistory(_clipboardHistory[_clipboardSelectedIndex]);
         }
 
-        /// <summary>캡슐 변형·폭·투명도의 모든 잔여값을 완전 초기화한다. 등장 직전에도 호출.</summary>
-        private void ResetCapsuleTransforms()
+        private void ClipboardClearButton_Click(object sender, RoutedEventArgs e)
         {
-            // 애니메이션 HoldEnd 잔여값을 전부 제거해 다음 등장이 항상 같은 상태에서 시작하게 한다 (실측 버그)
-            ClipboardSideDropTransform.BeginAnimation(TranslateTransform.YProperty, null);
-            ClipboardSideTransform.BeginAnimation(TranslateTransform.XProperty, null);
-            ClipboardSideCapsule.BeginAnimation(UIElement.OpacityProperty, null);
-            ClipboardSideDropTransform.Y = 0;
-            ClipboardSideTransform.X = 0;
-            ClipboardSideCapsule.Opacity = 0;
-            ClipboardSideCapsule.Width = double.NaN;
+            _clipboardHistory.Clear();
+            _clipboardSelectedIndex = -1;
+            HideClipboardHistoryPanel();
         }
 
-        // 캡슐 위치 계산에 쓰는 좌표를 기록 패널도 공유 — 캡슐 아래에 붙인다
+        private void MoveClipboardSelection(int delta)
+        {
+            if (_clipboardHistory.Count == 0) return;
+            int current = _clipboardSelectedIndex < 0 ? (delta > 0 ? -1 : _clipboardHistory.Count) : _clipboardSelectedIndex;
+            _clipboardSelectedIndex = Math.Clamp(current + delta, 0, _clipboardHistory.Count - 1);
+            BuildClipboardHistoryRows();
+        }
+
+        private void ActivateClipboardSelection()
+        {
+            if (_clipboardSelectedIndex < 0 || _clipboardSelectedIndex >= _clipboardHistory.Count) return;
+            UseClipboardItem(_clipboardHistory[_clipboardSelectedIndex]);
+        }
+
+
+        /// <summary>기록 패널을 노치 아래 중앙에 내린다.</summary>
         private void RepositionClipboardHistoryPanel()
         {
             if (ClipboardHistoryPanel.Visibility != Visibility.Visible) return;
             try
             {
-                double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                double scaleX = VisualTreeHelper.GetDpi(this).DpiScaleX;
                 double scaleY = VisualTreeHelper.GetDpi(this).DpiScaleY;
 
-                // 패널은 캡슐의 오른쪽 아래에 붙인다 — 아래로 펼쳐지는 느낌은 유지하되
-                // 캡슐과 가로로 정렬돼 통일감을 준다 (DPI 정규화 스케일도 동일 적용)
-                double dpiNorm = VisualTreeHelper.GetDpi(this).DpiScaleY;
-                double panelScale = dpiNorm > 0 ? Math.Min(1.75 / dpiNorm, 2.2) : 1.0;
+                // 물리 크기 정규화 — 어느 배율에서도 같은 크기로 보이게
+                double panelScale = scaleY > 0 ? Math.Min(1.75 / scaleY, 2.2) : 1.0;
                 ClipboardHistoryPanel.LayoutTransform = new ScaleTransform(panelScale, panelScale);
+                double panelWidth = ClipboardHistoryPanel.ActualWidth * panelScale;
 
-                Point capsuleBottomRight = ClipboardSideCapsule.PointToScreen(
-                    new Point(ClipboardSideCapsule.ActualWidth, ClipboardSideCapsule.ActualHeight));
-                Point canvasOrigin = RootGrid.PointToScreen(new Point(0, 0));
-                Canvas.SetLeft(ClipboardHistoryPanel, (capsuleBottomRight.X - canvasOrigin.X) / dpi - ClipboardHistoryPanel.ActualWidth);
-                Canvas.SetTop(ClipboardHistoryPanel, (capsuleBottomRight.Y - canvasOrigin.Y) / scaleY + 8);
+                Point notchBottom = NotchBorder.PointToScreen(new Point(NotchBorder.ActualWidth / 2, NotchBorder.ActualHeight));
+                Point origin = RootGrid.PointToScreen(new Point(0, 0));
+                double left = (notchBottom.X - origin.X) / scaleX - panelWidth / 2;
+
+                // 화면 밖으로 밀려나지 않게 좌우를 눌러 둔다
+                double screenWidth = SystemParameters.PrimaryScreenWidth;
+                left = Math.Clamp(left, 8, Math.Max(8, screenWidth - panelWidth - 8));
+
+                Canvas.SetLeft(ClipboardHistoryPanel, left);
+                Canvas.SetTop(ClipboardHistoryPanel, (notchBottom.Y - origin.Y) / scaleY + 10);
+
+                Log.Info("Clipboard panel layout: "
+                    + $"scale={scaleX:F2} panelScale={panelScale:F2} "
+                    + $"panel={ClipboardHistoryPanel.ActualWidth:F0}x{ClipboardHistoryPanel.ActualHeight:F0} "
+                    + $"notch={notchBottom.X:F0},{notchBottom.Y:F0} origin={origin.X:F0},{origin.Y:F0} "
+                    + $"left={Canvas.GetLeft(ClipboardHistoryPanel):F0} top={Canvas.GetTop(ClipboardHistoryPanel):F0}");
             }
             catch
             {
-                Canvas.SetLeft(ClipboardHistoryPanel, Canvas.GetLeft(ClipboardSideCapsule));
-                Canvas.SetTop(ClipboardHistoryPanel, Canvas.GetTop(ClipboardSideCapsule) + 50);
+                Canvas.SetLeft(ClipboardHistoryPanel, ActualWidth / 2 - ClipboardHistoryPanel.ActualWidth / 2);
+                Canvas.SetTop(ClipboardHistoryPanel, 60);
             }
         }
 
@@ -735,8 +1114,6 @@ namespace TopDock
         {
             _isExpanded = true;
 
-            // 클립보드 캡슐은 호버와 무관하게 유지한다 — 본체 안 스트립은 철폐됐으므로
-            // 캡슐이 유일한 클립보드 UI다 (확장 얼굴/AI 탭에서도 계속 보여야 함)
 
             if (_currentViewMode == ViewMode.Assistant) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
@@ -762,9 +1139,6 @@ namespace TopDock
             _isVolumeAdjusting = false;
             HideVolumeBarExpanded();
 
-            // 노치를 떠나면 클립보드 스트립도 즉시 정리 (높이는 SwitchViewMode가 처리)
-            _clipboardStripVisible = false;
-            ClipboardStripPanel.Visibility = Visibility.Collapsed;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (_notificationTimer != null && _notificationTimer.IsEnabled)
             {
@@ -1062,6 +1436,16 @@ namespace TopDock
                     new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(150)) });
             }
 
+            // 접힌 상태로 돌아가면 볼륨바 오버레이도 함께 정리한다 (확장 상태에서만 쓰는 UI)
+            if (!_isExpanded && _volumeBarVisible)
+            {
+                _volumeBarVisible = false;
+                VolumeBarPanel.BeginAnimation(UIElement.OpacityProperty, null);
+                VolumeBarPanel.Visibility = Visibility.Collapsed;
+                VolumeBarTransform.BeginAnimation(TranslateTransform.YProperty, null);
+                VolumeBarTransform.Y = -10;
+            }
+
             SetViewActive(activeView, duration, ease);
             NotchBorder.CornerRadius = new CornerRadius(targetRadius);
 
@@ -1079,12 +1463,6 @@ namespace TopDock
 
             NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
             NotchBorder.BeginAnimation(Border.HeightProperty, heightAnim);
-
-            // 클립보드 캡슐이 떠 있는 동안 본체 크기 변화를 실시간 추적
-            if (ClipboardSideCapsule.Visibility == Visibility.Visible)
-            {
-                StartCapsuleTracking();
-            }
 
             UpdateGlowDimensions(targetWidth, targetHeight, targetRadius, duration, ease);
 
@@ -1154,18 +1532,14 @@ namespace TopDock
         private static readonly Duration NotchAnimDuration = new Duration(TimeSpan.FromMilliseconds(450));
         private static readonly ExponentialEase NotchAnimEase = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
 
+        /// <summary>
+        /// 볼륨바는 볼륨을 만지는 동안만 아래에서 올라오는 오버레이다.
+        /// 본체 높이는 건드리지 않는다 — 크기가 바뀌면 테두리 빛이 본체와 어긋나 어색해진다.
+        /// 그래서 본체·빛의 크기는 SwitchViewMode 한 곳에서만 결정된다.
+        /// </summary>
         private void ShowVolumeBarExpanded()
         {
-            // 볼륨 바와 클립보드 스트립이 같은 하단 슬롯을 쓰므로 상호 배타
-            HideClipboardStripExpanded(animateHeight: false);
-
             VolumeBarPanel.Visibility = Visibility.Visible;
-
-            double baseHeight = HasMedia ? 190 : 120;
-            double targetHeight = baseHeight + VolumeBarExtraHeight;
-
-            NotchBorder.BeginAnimation(Border.HeightProperty,
-                new DoubleAnimation { To = targetHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
 
             VolumeBarPanel.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation { To = 1, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
@@ -1180,11 +1554,6 @@ namespace TopDock
         {
             if (!_volumeBarVisible) return;
             _volumeBarVisible = false;
-
-            double baseHeight = HasMedia ? 190 : 120;
-
-            NotchBorder.BeginAnimation(Border.HeightProperty,
-                new DoubleAnimation { To = baseHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
 
             var opacityAnim = new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase };
             opacityAnim.Completed += (s, e) =>
@@ -1213,12 +1582,6 @@ namespace TopDock
                     if (_isExpanded)
                     {
                         HideVolumeBarExpanded();
-
-                        // 볼륨 조정이 끝나면 시계 모드에서 클립보드 스트립 복원
-                        if (_currentViewMode == ViewMode.IdleExpanded)
-                        {
-                            ShowClipboardStripExpanded();
-                        }
                     }
                     else
                     {
@@ -1555,147 +1918,9 @@ namespace TopDock
             }
         }
 
-        private bool _clipboardStripVisible;
-
-        private void ClipboardRow_Click(object sender, MouseButtonEventArgs e)
-        {
-            if (sender is Border border && border.Tag is ClipboardItem item)
-            {
-                try
-                {
-                    // 자기 복사가 리스너에 새 항목으로 잡히는 것을 방지
-                    _suppressNextClipboardEvent = true;
-
-                    if (item.IsImage && item.Image != null)
-                        Clipboard.SetImage(item.Image);
-                    else if (!string.IsNullOrWhiteSpace(item.Text))
-                        Clipboard.SetText(item.Text);
-                }
-                catch
-                {
-                    _suppressNextClipboardEvent = false;
-                }
-            }
-        }
-
         private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
         {
-            // 확장 노치에서도 동일한 오른쪽 패널로 접근 — 하단 스트립은 철폐됐다
-            if (_clipboardHistoryOpen)
-            {
-                HideClipboardHistoryPanel();
-                HideClipboardSideCapsule();
-            }
-            else if (_clipboardHistory.Count > 0)
-            {
-                // 캡슐이 안 떠 있으면 조용히 띄워 위치 기준점을 만든 뒤 패널을 연다
-                ShowClipboardSideCapsule("클립보드");
-                ShowClipboardHistoryPanel();
-            }
-        }
-
-        private void RenderClipboardHistory()
-        {
-            TextBlock?[] texts = { ClipboardRowText1, ClipboardRowText2, ClipboardRowText3, ClipboardRowText4, ClipboardRowText5 };
-            Border?[] rows = { ClipboardRow1, ClipboardRow2, ClipboardRow3, ClipboardRow4, ClipboardRow5 };
-
-            int visibleCount = Math.Min(_clipboardHistory.Count, 5);
-            for (int i = 0; i < 5; i++)
-            {
-                var row = rows[i];
-                var text = texts[i];
-                if (row == null || text == null) continue;
-
-                if (i < visibleCount)
-                {
-                    var item = _clipboardHistory[i];
-
-                    if (item.IsImage)
-                    {
-                        // 행 내용을 썸네일 이미지로 교체 (행 높이는 스트립 레이아웃 유지)
-                        var img = _rowImages[i] ??= new Image
-                        {
-                            Height = 18,
-                            Stretch = Stretch.Uniform,
-                            HorizontalAlignment = HorizontalAlignment.Left
-                        };
-                        img.Source = item.Image;
-                        row.Child = img;
-                    }
-                    else
-                    {
-                        text.Text = item.Text.ReplaceLineEndings(" ").Trim();
-                        row.Child = text;
-                    }
-
-                    row.Tag = item;
-                    row.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    text.Text = string.Empty;
-                    row.Tag = null;
-                    row.Visibility = Visibility.Collapsed;
-                }
-            }
-        }
-
-        private double CalcClipboardStripHeight()
-        {
-            int rows = Math.Min(_clipboardHistory.Count, 5);
-            if (rows == 0) return 0;
-            return 38 + rows * 26; // 헤더 + 행 높이 + 패널 패딩
-        }
-
-        private void ShowClipboardStripExpanded()
-        {
-            if (_clipboardHistory.Count == 0) return;
-
-            _clipboardStripVisible = true;
-            RenderClipboardHistory();
-            ClipboardStripPanel.Visibility = Visibility.Visible;
-
-            double baseHeight = HasMedia ? 190 : 120;
-            double targetHeight = baseHeight + CalcClipboardStripHeight();
-
-            NotchBorder.BeginAnimation(Border.HeightProperty,
-                new DoubleAnimation { To = targetHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-            ClipboardStripPanel.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation { To = 1, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-            ClipboardStripTransform.BeginAnimation(TranslateTransform.YProperty,
-                new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-        }
-
-        private void HideClipboardStripExpanded(bool animateHeight)
-        {
-            if (!_clipboardStripVisible) return;
-            _clipboardStripVisible = false;
-
-            if (animateHeight)
-            {
-                double baseHeight = HasMedia ? 190 : 120;
-                NotchBorder.BeginAnimation(Border.HeightProperty,
-                    new DoubleAnimation { To = baseHeight, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-            }
-
-            var opacityAnim = new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase };
-            opacityAnim.Completed += (s, e) =>
-            {
-                if (!_clipboardStripVisible) ClipboardStripPanel.Visibility = Visibility.Collapsed;
-            };
-            ClipboardStripPanel.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
-            ClipboardStripTransform.BeginAnimation(TranslateTransform.YProperty,
-                new DoubleAnimation { To = -10, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-        }
-
-        private double CalculateIdleExpandedHeight()
-        {
-            double baseHeight = 120;
-            if (_clipboardStripVisible && _clipboardHistory.Count > 0)
-            {
-                baseHeight += CalcClipboardStripHeight();
-            }
-            return baseHeight;
+            ToggleClipboardHistory();
         }
 
         private void SetLyricsVisibility(bool visible)
@@ -1856,6 +2081,14 @@ namespace TopDock
             }
         }
 
+        /// <summary>이퀄라이저 바 색을 현재 곡의 색으로 맞춘다 (테두리 빛과 동일한 색).</summary>
+        private void UpdateEqualizerAccent(Color color)
+        {
+            if (_equalizerAccent == color) return;
+            _equalizerAccent = color;
+            _equalizerBrush.Color = color;   // 이미 붙어 있는 브러시 색만 바꾼다 (재할당 없음)
+        }
+
         private void StartEqualizerAnimation()
         {
             StopEqualizerAnimation();
@@ -1990,6 +2223,7 @@ namespace TopDock
             if (hwnd != IntPtr.Zero)
             {
                 UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
+                UnregisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD);
                 if (cfg.AssistantEnabled)
                 {
                     RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
@@ -2254,9 +2488,6 @@ namespace TopDock
             }
 
             _isExpanded = true;
-            // AI 탭에서는 하단 클립보드 스트립이 대화와 겹치므로 항상 닫는다
-            _clipboardStripVisible = false;
-            ClipboardStripPanel.Visibility = Visibility.Collapsed;
             SwitchViewMode(ViewMode.Assistant);
 
             // 지시 콘솔: 대기 오브(호흡)가 비서 그 자체 — 인사 말풍선 없음
@@ -2507,6 +2738,9 @@ namespace TopDock
             bool playing = _mediaService.CurrentMedia?.IsPlaying == true;
             string log = "";
 
+            // 이퀄라이저 바도 같은 곡의 색 — 한 곡 안에서는 테두리와 바가 같은 색을 쓴다
+            UpdateEqualizerAccent(track ? (_albumColor ?? ColorFromKey(_lastMediaKey)) : EqualizerIdleColor);
+
             if (_orbCentral)
             {
                 log = "assistant-working";
@@ -2683,9 +2917,9 @@ namespace TopDock
             {
                 RemoveClipboardFormatListener(hwnd);
                 UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
+                UnregisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD);
             }
 
-            StopCapsuleTracking();
 
             _assistantCts?.Cancel();
             _assistant.ResetConversation();

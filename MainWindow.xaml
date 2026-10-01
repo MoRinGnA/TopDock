@@ -62,18 +62,6 @@
             </Setter>
         </Style>
 
-        <Style x:Key="ClipRowStyle" TargetType="Border">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="8,4"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#22FFFFFF"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
         <Style x:Key="AppleButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -241,6 +229,7 @@
                     Style="{StaticResource DarkNotchStyle}"
                     MouseEnter="Notch_MouseEnter"
                     MouseLeave="Notch_MouseLeave"
+                    MouseLeftButtonUp="Notch_Click"
                     PreviewMouseWheel="Notch_PreviewMouseWheel">
 
                 <Grid x:Name="OuterContentGrid" ClipToBounds="True">
@@ -441,12 +430,13 @@
                                        Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                             <StackPanel x:Name="EqualizerPanel" Grid.Column="2" Orientation="Horizontal"
                                         VerticalAlignment="Center" Margin="10,0,0,0">
+                                <!-- 색은 코드에서 현재 곡의 색(테두리 빛과 동일)으로 바꿔 끼운다 -->
                                 <Border x:Name="EqBar1" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#FF9F0A" Margin="1,0,1,0" VerticalAlignment="Center"/>
+                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
                                 <Border x:Name="EqBar2" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#FF9F0A" Margin="1,0,1,0" VerticalAlignment="Center"/>
+                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
                                 <Border x:Name="EqBar3" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#FF9F0A" Margin="1,0,1,0" VerticalAlignment="Center"/>
+                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Grid>
 
@@ -601,53 +591,11 @@
 
                     </Grid>
 
-                    <!-- 클립보드 히스토리 스트립 (확장 뷰 하단 오버레이, 행 클릭 시 다시 복사) -->
-                    <Border x:Name="ClipboardStripPanel" Visibility="Collapsed" Opacity="0"
-                            VerticalAlignment="Bottom" Margin="16,6,16,12"
-                            Background="#D9121214" CornerRadius="10" Padding="12,9,12,9">
-                        <Border.RenderTransform>
-                            <TranslateTransform x:Name="ClipboardStripTransform" Y="-10"/>
-                        </Border.RenderTransform>
-                        <StackPanel>
-                            <TextBlock Text="CLIPBOARD" FontSize="9.5" FontWeight="SemiBold" Foreground="#8E8E93"
-                                       HorizontalAlignment="Left" Margin="2,0,0,4"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            <Border x:Name="ClipboardRow1" Style="{StaticResource ClipRowStyle}" Margin="0,1,0,1"
-                                    MouseLeftButtonUp="ClipboardRow_Click">
-                                <TextBlock x:Name="ClipboardRowText1" FontSize="12" Foreground="#E5FFFFFF"
-                                           TextTrimming="CharacterEllipsis"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            </Border>
-                            <Border x:Name="ClipboardRow2" Style="{StaticResource ClipRowStyle}" Margin="0,1,0,1"
-                                    MouseLeftButtonUp="ClipboardRow_Click">
-                                <TextBlock x:Name="ClipboardRowText2" FontSize="12" Foreground="#E5FFFFFF"
-                                           TextTrimming="CharacterEllipsis"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            </Border>
-                            <Border x:Name="ClipboardRow3" Style="{StaticResource ClipRowStyle}" Margin="0,1,0,1"
-                                    MouseLeftButtonUp="ClipboardRow_Click">
-                                <TextBlock x:Name="ClipboardRowText3" FontSize="12" Foreground="#E5FFFFFF"
-                                           TextTrimming="CharacterEllipsis"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            </Border>
-                            <Border x:Name="ClipboardRow4" Style="{StaticResource ClipRowStyle}" Margin="0,1,0,1"
-                                    MouseLeftButtonUp="ClipboardRow_Click">
-                                <TextBlock x:Name="ClipboardRowText4" FontSize="12" Foreground="#E5FFFFFF"
-                                           TextTrimming="CharacterEllipsis"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            </Border>
-                            <Border x:Name="ClipboardRow5" Style="{StaticResource ClipRowStyle}" Margin="0,1,0,1"
-                                    MouseLeftButtonUp="ClipboardRow_Click">
-                                <TextBlock x:Name="ClipboardRowText5" FontSize="12" Foreground="#E5FFFFFF"
-                                           TextTrimming="CharacterEllipsis"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI"/>
-                            </Border>
-                        </StackPanel>
-                    </Border>
-
                     <!-- Volume bar panel (bottom) -->
+                    <!-- 본체 크기는 바꾸지 않고 아래에서 슬라이드로 올라온다.
+                         하단 여백을 최소로 써서 미디어 컨트롤과 겹치지 않게 둔다. -->
                     <Border x:Name="VolumeBarPanel" Visibility="Collapsed" Opacity="0"
-                            VerticalAlignment="Bottom" Margin="16,6,16,12"
+                            VerticalAlignment="Bottom" Margin="16,6,16,6"
                             Background="#D9121214" CornerRadius="10" Padding="12,9,12,9">
                         <Border.RenderTransform>
                             <TranslateTransform x:Name="VolumeBarTransform" Y="-10"/>
@@ -682,6 +630,20 @@
                         <Ellipse x:Name="BatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
                     </Grid>
 
+                    <!-- 복사 피드백: 노치 안쪽 우측에 잠깐 스며드는 배지.
+                         별도 창(캡슐)을 띄우지 않고 아일랜드 안에서만 알린다. -->
+                    <Border x:Name="ClipboardFeedbackChip" Width="22" Height="22" CornerRadius="11"
+                            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0"
+                            Background="#2C2C30" BorderBrush="#3DFFFFFF" BorderThickness="1"
+                            Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                            RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="ClipboardFeedbackScale" ScaleX="1" ScaleY="1"/>
+                        </Border.RenderTransform>
+                        <Path Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                              Fill="#0A84FF" Width="11" Height="11" Stretch="Uniform"/>
+                    </Border>
+
                 </Grid>
             </Border>
 
@@ -692,36 +654,8 @@
                                  CornerRadius="19" BorderWidth="1.2" Strength="0.9" Active="True"/>
         </Grid>
 
-        <!-- 클립보드 사이드 캡슐: 레이아웃 완전 분리(Canvas) — 노치 컨테이너 폭에 영향 없음.
-             외형은 DarkNotchStyle(아일랜드)과 동일한 배경/테두리/그림자. 위치는 코드에서 실측. -->
+        <!-- 클립보드 기록 패널: 노치 아래 중앙에 내려온다 (Ctrl+Shift+V 또는 노치 클릭) -->
         <Canvas IsHitTestVisible="True">
-            <Border x:Name="ClipboardSideCapsule" Canvas.Left="0" Canvas.Top="0"
-                    Height="40" CornerRadius="20" ClipToBounds="True"
-                    Background="#0C0C0E" BorderThickness="1"
-                    Style="{StaticResource DarkNotchStyle}"
-                    RenderTransformOrigin="0,0.5"
-                    Cursor="Hand"
-                    MouseLeftButtonUp="ClipboardSideCapsule_Click"
-                    Visibility="Collapsed" Opacity="0">
-                <Border.RenderTransform>
-                    <TransformGroup>
-                        <TranslateTransform x:Name="ClipboardSideTransform" X="0"/>
-                        <TranslateTransform x:Name="ClipboardSideDropTransform" Y="0"/>
-                        <!-- DPI 정규화: 코드에서 1.75/배율로 설정 — 노트북 175%에서 본 크기를 어느 모니터에서든 유지 -->
-                        <ScaleTransform x:Name="ClipboardSideDpiScale" ScaleX="1" ScaleY="1"/>
-                    </TransformGroup>
-                </Border.RenderTransform>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Path Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
-                          Fill="#0A84FF" Width="13" Height="13" Stretch="Uniform"
-                          VerticalAlignment="Center" Margin="16,0,9,0"/>
-                    <TextBlock x:Name="ClipboardSideText" Text=""
-                               Foreground="#E8FFFFFF" FontSize="13.5" FontWeight="Medium"
-                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
-                               VerticalAlignment="Center" Margin="0,0,12,0"/>
-                </StackPanel>
-            </Border>
-            <!-- 클립보드 기록 패널: 캡슐 클릭 시 아래로 펼쳐지는 최근 5개 목록 -->
             <Border x:Name="ClipboardHistoryPanel" Canvas.Left="0" Canvas.Top="0"
                     MaxWidth="300" CornerRadius="14"
                     Background="#0C0C0E" BorderThickness="1"
@@ -731,7 +665,20 @@
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="ClipboardHistoryTransform" Y="0"/>
                 </Border.RenderTransform>
-                <StackPanel x:Name="ClipboardHistoryRows" Margin="6"/>
+                <StackPanel>
+                    <Grid Margin="12,8,6,0">
+                        <TextBlock Text="CLIPBOARD" FontSize="9.5" FontWeight="SemiBold" Foreground="#8E8E93"
+                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                   FontFamily="Segoe UI Variable Display, Segoe UI"/>
+                        <Button x:Name="ClipboardClearButton" Style="{StaticResource GhostIconButton}"
+                                Width="20" Height="20" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Click="ClipboardClearButton_Click" ToolTip="기록 모두 지우기">
+                            <Path Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                                  Fill="#8E8E93" Width="11" Height="11" Stretch="Uniform"/>
+                        </Button>
+                    </Grid>
+                    <StackPanel x:Name="ClipboardHistoryRows" Margin="6"/>
+                </StackPanel>
             </Border>
         </Canvas>
     </Grid>

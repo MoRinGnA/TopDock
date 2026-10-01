@@ -150,7 +150,7 @@
             <!-- 일반 -->
             <TextBlock Text="일반" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,14,0,6"/>
             <CheckBox x:Name="ShowNotificationsCheck" Content="알림 표시" Margin="0,2,0,4"/>
-            <CheckBox x:Name="ShowClipboardToastCheck" Content="클립보드 복사 토스트" Margin="0,2,0,6"/>
+            <CheckBox x:Name="ShowClipboardToastCheck" Content="복사피드백 ( 노치안쪽배지 )" Margin="0,2,0,6"/>
 
             <!-- 노치 -->
             <TextBlock Text="노치" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>

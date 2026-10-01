@@ -68,6 +68,13 @@ namespace TopDock.Controls
         /// <summary>전체 밝기(0~1).</summary>
         public double Strength { get => (double)GetValue(StrengthProperty); set => SetValue(StrengthProperty, value); }
 
+        public static readonly DependencyProperty FlashProperty = DependencyProperty.Register(
+            nameof(Flash), typeof(double), typeof(BorderBeam),
+            new PropertyMetadata(0.0, (s, e) => ((BorderBeam)s).InvalidateVisual()));
+        /// <summary>순간 강조(0~1) — 복사 같은 순간에 가장자리가 한 번 밝아진다.
+        /// Strength와 달리 1을 넘는 밝기를 낼 수 있어야 해서 곱하지 않고 따로 더한다.</summary>
+        public double Flash { get => (double)GetValue(FlashProperty); set => SetValue(FlashProperty, value); }
+
         public static readonly DependencyProperty ActiveProperty = DependencyProperty.Register(
             nameof(Active), typeof(bool), typeof(BorderBeam),
             new PropertyMetadata(false, (s, e) => ((BorderBeam)s).OnActiveChanged()));
@@ -236,6 +243,9 @@ namespace TopDock.Controls
             if (fade <= 0.001) return;
 
             Color accent = AccentColor is Color ac ? ac : DefaultAccent;
+            // 순간 강조 — 림·블룸·혜성을 한꺼번에 올려 "빛났다"는 느낌을 만든다
+            double edgeGain = 1.0 + Math.Clamp(Flash, 0, 1) * 1.5;
+            double litFade = fade * edgeGain;   // 밝기 계산은 전부 여기에 턴다
 
             // 형태 — Large는 헤드가 크고 굵게, 꼬리도 조금 길게 돈다
             bool large = Form == BeamForm.Large;
@@ -286,16 +296,17 @@ namespace TopDock.Controls
             }
 
             // 1) 상시 림 — 평소에도 테두리는 어둑하게 살아 있다
-            dc.DrawGeometry(null, PenFor(accent, (int)(BaseRim * fade * 255), bw), ringGeo);
+            dc.DrawGeometry(null, PenFor(accent,
+                (int)Math.Clamp(BaseRim * litFade * 255, 0, 255), bw), ringGeo);
 
             // 2) 블룸 — 헤드 주변의 accent 광이 테두리 안팎으로 번진다
-            DrawBloom(dc, accent, head, fade, breathe, formScale * gain, headSigma, tailSpan);
+            DrawBloom(dc, accent, head, litFade, breathe, formScale * gain, headSigma, tailSpan);
 
             // 2.5) 안쪽 물들임 — 헤드 빛이 패널 안으로 퍼진다(큰 표면 전용)
-            DrawWash(dc, accent, head, fade, breathe, wash);
+            DrawWash(dc, accent, head, fade, breathe, wash * edgeGain);
 
             // 3) 혜성 헤드 + 꼬리 — 링 세그먼트별 알파
-            DrawComet(dc, accent, head, fade, breathe, cometW, headSigma, tailSpan);
+            DrawComet(dc, accent, head, litFade, breathe, cometW, headSigma, tailSpan);
 
             dc.Pop(); // clip
         }
