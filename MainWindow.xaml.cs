@@ -146,6 +146,7 @@ namespace TopDock
             _mediaService.TimelineChanged += MediaService_TimelineChanged;
 
             _notificationService.NotificationReceived += NotificationService_NotificationReceived;
+            _batteryService.BatteryStatusChanged += BatteryService_BatteryStatusChanged;
 
             // 참고: DeltaReceived는 SendAssistantMessageAsync의 DeltaProxy가 유일 구독자다.
             // 여기서도 구독하면 델타가 2번씩 붙는 버그가 생긴다.
@@ -820,6 +821,42 @@ namespace TopDock
                 VisualTreeHelper.GetDpi(this).PixelsPerDip
             );
             return formattedText.Width;
+        }
+
+        /// <summary>배터리 상태를 3분류로만 표현한다(퍼센트 게이지 없음).
+        /// 일반 상태에서는 노치 테두리를 원래대로 두고, 충전 중 / 배터리 부족일 때만
+        /// 테두리에 상태 색 라이트를 입힌다 — 순수 WPF(Border.BorderBrush)로만 처리하며
+        /// 별도 프로세스나 셰이더를 쓰지 않는다.</summary>
+        private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                bool isNormal = !e.IsCharging && e.BatteryPercent > 0.20f;
+
+                if (isNormal)
+                {
+                    // 일반 상태 — DarkNotchStyle의 원래 테두리로 되돌린다.
+                    NotchBorder.ClearValue(Border.BorderBrushProperty);
+                    return;
+                }
+
+                Color accent = e.IsCharging
+                    ? Color.FromRgb(57, 255, 20)   // 충전 중 — 녹색 라이트
+                    : Color.FromRgb(255, 59, 48);  // 배터리 부족 — 적색 라이트
+
+                // 원본 DarkNotchStyle과 같은 세로 결로 살짝 흐려지게 해서
+                // 1px 림 위에 상태 색이 자연스럽게 얹히게 한다.
+                var brush = new LinearGradientBrush
+                {
+                    StartPoint = new Point(0.5, 0),
+                    EndPoint = new Point(0.5, 1),
+                };
+                brush.GradientStops.Add(new GradientStop(accent, 0.0));
+                brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x70, accent.R, accent.G, accent.B), 1.0));
+                brush.Freeze();
+
+                NotchBorder.BorderBrush = brush;
+            });
         }
 
         private void NotificationService_NotificationReceived(object? sender, NotificationEventArgs e)

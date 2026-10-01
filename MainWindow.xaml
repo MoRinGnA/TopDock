@@ -235,9 +235,8 @@
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
 
-            <!-- 배터리 메탈 링: metal-fx liquidMetal GLSL을 소프트웨어 렌더로 1:1 이식 —
-                 충전=녹색, 저전력=적색 tint, 진행도만큼 링이 채워짐 -->
-            <!-- Main notch border -->
+            <!-- Main notch border — 배터리 상태(충전=녹색 / 부족=적색)는
+                 코드비하인드에서 이 테두리의 BorderBrush로만 표현한다. -->
             <Border x:Name="NotchBorder" Width="100" Height="38"
                     Style="{StaticResource DarkNotchStyle}"
                     MouseEnter="Notch_MouseEnter"
