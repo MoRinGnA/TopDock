@@ -775,7 +775,7 @@ namespace TopDock
         //    beam은 콘텐츠 위에서 항상 도는 오버레이라 XAML에서 Active=True 상태로 상주한다.
         //    앨범색·시간대 팔레트 등 기존 엠비언트 라이트는 전부 제거됐다.
 
-        /// <summary>노치 크기 변화에 맞춰 beam·메탈 링 캔버스를 함께 모핑한다(본체와 같은 크기 유지).</summary>
+        /// <summary>노치 크기 변화에 맞춰 beam을 함께 모핑한다(본체와 같은 크기 유지).</summary>
         private void UpdateGlowDimensions(double targetWidth, double targetHeight, double targetRadius, Duration duration, IEasingFunction ease)
         {
             var wAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
@@ -785,10 +785,6 @@ namespace TopDock
             Timeline.SetDesiredFrameRate(wAnim, 60);
             Timeline.SetDesiredFrameRate(hAnim, 60);
             Timeline.SetDesiredFrameRate(rAnim, 60);
-
-            NotchBeam.BeginAnimation(WidthProperty, wAnim);
-            NotchBeam.BeginAnimation(HeightProperty, hAnim);
-            NotchBeam.BeginAnimation(Controls.BorderBeam.CornerRadiusProperty, rAnim);
 
             NotchBeam.BeginAnimation(WidthProperty, wAnim);
             NotchBeam.BeginAnimation(HeightProperty, hAnim);
@@ -831,6 +827,11 @@ namespace TopDock
         {
             Dispatcher.Invoke(() =>
             {
+                // 배터리 라이트는 접힌 기본 아일랜드에서만 보여준다.
+                // SwitchViewMode도 다른 뷰로 갈 때 테두리를 비우므로 여기서도 같은 기준을 지킨다
+                // (지키지 않으면 확장 뷰에서 5초마다 배터리 색이 되살아난다).
+                if (_currentViewMode != ViewMode.IdleCompact) return;
+
                 bool isNormal = !e.IsCharging && e.BatteryPercent > 0.20f;
 
                 if (isNormal)

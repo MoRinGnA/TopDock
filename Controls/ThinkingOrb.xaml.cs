@@ -35,6 +35,7 @@ namespace TopDock.Controls
 
         private readonly Brush[] _alphaCache = new Brush[16];
         private readonly Pen[] _penCache = new Pen[16];
+        private readonly Brush?[] _dotCache = new Brush?[256];
 
         public ThinkingOrb()
         {
@@ -59,7 +60,7 @@ namespace TopDock.Controls
 
         public static readonly DependencyProperty InkProperty = DependencyProperty.Register(
             nameof(Ink), typeof(Color), typeof(ThinkingOrb),
-            new PropertyMetadata(Color.FromRgb(0xE8, 0xE8, 0xEC)));
+            new PropertyMetadata(Color.FromRgb(0xE8, 0xE8, 0xEC), (s, e) => ((ThinkingOrb)s).OnInkChanged()));
 
         public Color Ink
         {
@@ -153,6 +154,35 @@ namespace TopDock.Controls
             return brush;
         }
 
+        /// <summary>점 브러시 캐시 — (명도 16 × 알파 16) 256개면 충분하다.
+        /// 점 수가 프레임당 1,500개를 넘는 모드(ring/ribbon)가 있어, 브러시를 매번 새로 만들면
+        /// 60fps에서 초당 10만 개를 할당해 GC 스터터가 생긴다.</summary>
+        private Brush DotBrush(double white, double alpha01)
+        {
+            int wi = Math.Clamp((int)(white * 15), 0, 15);
+            int ai = Math.Clamp((int)(alpha01 * 15), 0, 15);
+            int key = (wi << 4) | ai;
+            if (_dotCache[key] is Brush cached) return cached;
+
+            // 원본 inkColor(dark): white가 낮을수록(뒤 점) 어둡다 — 밝은 잉크 톤으로 보간
+            double w = wi / 15.0;
+            byte chR = (byte)Math.Clamp(Ink.R * (0.35 + 0.65 * w), 0, 255);
+            byte chG = (byte)Math.Clamp(Ink.G * (0.35 + 0.65 * w), 0, 255);
+            byte chB = (byte)Math.Clamp(Ink.B * (0.35 + 0.65 * w), 0, 255);
+            var brush = new SolidColorBrush(Color.FromArgb((byte)(ai * 255 / 15), chR, chG, chB));
+            brush.Freeze();
+            _dotCache[key] = brush;
+            return brush;
+        }
+
+        private void OnInkChanged()
+        {
+            Array.Clear(_alphaCache, 0, _alphaCache.Length);
+            Array.Clear(_penCache, 0, _penCache.Length);
+            Array.Clear(_dotCache, 0, _dotCache.Length);
+            InvalidateVisual();
+        }
+
         private Pen PenFor(double alpha01, double thickness)
         {
             int idx = Math.Clamp((int)(alpha01 * 15), 0, 15);
@@ -209,15 +239,7 @@ namespace TopDock.Controls
 
             foreach (Dot d in _dots)
             {
-                // 원본 inkColor(dark): white가 낮을수록(뒤 점) 어둡다 — 밝은 잉크 톤으로 보간
-                double w = Math.Clamp(d.White, 0, 1);
-                byte chR = (byte)Math.Clamp(Ink.R * (0.35 + 0.65 * w), 0, 255);
-                byte chG = (byte)Math.Clamp(Ink.G * (0.35 + 0.65 * w), 0, 255);
-                byte chB = (byte)Math.Clamp(Ink.B * (0.35 + 0.65 * w), 0, 255);
-                var brush = new SolidColorBrush(Color.FromArgb(
-                    (byte)Math.Clamp(d.A * 255, 0, 255), chR, chG, chB));
-                brush.Freeze();
-                dc.DrawEllipse(brush, null, new Point(d.X, d.Y), d.R, d.R);
+                dc.DrawEllipse(DotBrush(d.White, d.A), null, new Point(d.X, d.Y), d.R, d.R);
             }
         }
 
@@ -579,7 +601,8 @@ namespace TopDock.Controls
             double rs = RadiusScale(size, 0.6);
 
             var dots = new List<Dot>();
-            const int ghostN = faceOnPlaceholder ? 0 : 150;
+            // ring(정면) 프리셋은 유령 구체 없이 밴드만 그린다 — 원본의 깨끗한 정면 링.
+            int ghostN = faceOn ? 0 : 150;
             for (int i = 0; i < ghostN; i++)
             {
                 var d = FibDir(i, ghostN);
@@ -628,8 +651,6 @@ namespace TopDock.Controls
             }
             FinalizeFrame(dots, new List<Line>());
         }
-
-        private const bool faceOnPlaceholder = false; // C#은 지역 const 불가라 대체 (braid/ribbon ghostN 구분용)
 
         private void FrameRibbon(double size) => FrameRibbon(size, faceOn: false, bandMul: 3.9, wobMul: 1.0);
         private void FrameRing(double size) => FrameRibbon(size, faceOn: true, bandMul: 3.627, wobMul: 0.368);

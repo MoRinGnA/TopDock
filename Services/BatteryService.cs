@@ -52,8 +52,13 @@ namespace TopDock.Services
         private void CheckBatteryStatus()
         {
             var powerStatus = SystemInformation.PowerStatus;
-            float currentPercent = powerStatus.BatteryLifePercent;
-            bool currentCharging = powerStatus.PowerLineStatus == PowerLineStatus.Online;
+
+            // 배터리가 없는 데스크톱은 PowerLineStatus가 항상 Online이라 '충전 중'으로 오인된다.
+            // 그대로 두면 노치에 초록 라이트가 영구히 켜지므로 배터리 유무를 먼저 확인한다.
+            bool hasBattery = (powerStatus.BatteryChargeStatus & BatteryChargeStatus.NoSystemBattery) == 0;
+
+            float currentPercent = hasBattery ? powerStatus.BatteryLifePercent : 1.0f;
+            bool currentCharging = hasBattery && powerStatus.PowerLineStatus == PowerLineStatus.Online;
 
             // BatteryLifePercent is 1.0 = 100%, 0.5 = 50%. Sometimes returns 255 if unknown.
             if (currentPercent > 1.0f) currentPercent = 1.0f; 
