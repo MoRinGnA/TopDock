@@ -7,9 +7,6 @@ namespace TopDock.Models
         [JsonPropertyName("youtubeApiKey")]
         public string YouTubeApiKey { get; set; } = string.Empty;
 
-        [JsonPropertyName("glowIntensity")]
-        public string GlowIntensity { get; set; } = "standard"; // subtle | standard | vivid
-
         [JsonPropertyName("topMargin")]
         public double TopMargin { get; set; } = 8;
 

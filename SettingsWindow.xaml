@@ -154,13 +154,6 @@
 
             <!-- 노치 -->
             <TextBlock Text="노치" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
-            <TextBlock Text="앰비언트 글로우 강도" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
-            <ComboBox x:Name="GlowIntensityCombo" Style="{StaticResource DarkCombo}" Width="220"
-                      HorizontalAlignment="Left" Margin="0,0,0,8" SelectedIndex="1">
-                <ComboBoxItem Content="절제 (Subtle)"/>
-                <ComboBoxItem Content="표준 (Standard)"/>
-                <ComboBoxItem Content="화려 (Vivid)"/>
-            </ComboBox>
             <TextBlock Text="상단 여백 (px)" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                 <Slider x:Name="TopMarginSlider" Width="220" Minimum="0" Maximum="40"

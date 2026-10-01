@@ -312,7 +312,7 @@
                                 <!-- beam은 입력창 다음 형제(위에 그려짐) — 안쪽 글로우가 보이게.
                                      Margin은 Border와 동일해야 테두리에 정확히 안착한다. -->
                                 <controls:BorderBeam x:Name="InputBeam" CornerRadius="10" BorderWidth="1.2"
-                                                     Strength="0.85" Margin="0,8,0,0"/>
+                                                     Strength="0.85" Speed="0.22" Margin="0,8,0,0"/>
                             </Grid>
 
                             <!-- 응답: 오브·상태 헤더 아래에 배치되어 겹치지 않는다 -->

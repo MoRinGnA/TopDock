@@ -24,12 +24,6 @@ namespace TopDock
             ShowNotificationsCheck.IsChecked = cfg.ShowNotifications;
             ShowClipboardToastCheck.IsChecked = cfg.ShowClipboardToast;
 
-            GlowIntensityCombo.SelectedIndex = cfg.GlowIntensity switch
-            {
-                "subtle" => 0,
-                "vivid" => 2,
-                _ => 1
-            };
             TopMarginSlider.Value = cfg.TopMargin;
             TopMarginValueText.Text = ((int)cfg.TopMargin).ToString();
 
@@ -124,12 +118,6 @@ namespace TopDock
             cfg.ShowNotifications = ShowNotificationsCheck.IsChecked == true;
             cfg.ShowClipboardToast = ShowClipboardToastCheck.IsChecked == true;
 
-            cfg.GlowIntensity = GlowIntensityCombo.SelectedIndex switch
-            {
-                0 => "subtle",
-                2 => "vivid",
-                _ => "standard"
-            };
             cfg.TopMargin = (int)TopMarginSlider.Value;
 
             cfg.SponsorSkipEnabled = SponsorSkipEnabledCheck.IsChecked == true;
