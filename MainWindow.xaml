@@ -429,6 +429,14 @@
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
                                 <Border x:Name="EqBar3" Width="2.5" Height="3" CornerRadius="1.25"
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
+                                <!-- 충전/부족 표시 — 미디어 재생 중에도 배터리 상태를 조용히 알린다.
+                                     자리는 CalculateCompactWidth가 항상 확보해 둔다. -->
+                                <Grid x:Name="MediaBatteryDot" Width="12" Height="12"
+                                      Margin="8,0,0,0" VerticalAlignment="Center"
+                                      Visibility="Collapsed" IsHitTestVisible="False">
+                                    <Ellipse x:Name="MediaBatteryDotGlow" Width="12" Height="12" Opacity="0.3" Fill="#34C759"/>
+                                    <Ellipse x:Name="MediaBatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
+                                </Grid>
                             </StackPanel>
                         </Grid>
 

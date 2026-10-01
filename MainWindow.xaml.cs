@@ -133,7 +133,6 @@ namespace TopDock
         // ── 배터리 표시 ──
         private BatteryLevel _batteryLevel = BatteryLevel.Normal;
         private float _batteryPercent = -1f;
-        private bool _batteryPulseRunning;
 
         private readonly DispatcherTimer _progressTimer;
         private readonly DispatcherTimer _clockTimer;
@@ -378,6 +377,7 @@ namespace TopDock
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
             _progressTimer.Stop();
+            StopNotchRadiusAnimation();
             _clockTimer.Stop();
             _volumeHudTimer?.Stop();
             _emptyMediaDebounceTimer?.Stop();

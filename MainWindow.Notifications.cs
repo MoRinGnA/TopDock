@@ -9,6 +9,12 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
+        /// <summary>미디어 컴팩트 뷰 오른쪽에서 배터리 점이 앉을 자리(점 12 + 여백 8).</summary>
+        private const double BatteryDotSlotWidth = 20;
+
+        /// <summary>지금 숨쉬고 있는 배터리 점. 뷰가 바뀌면 이 점만 멈추면 된다.</summary>
+        private FrameworkElement? _pulsingDot;
+
         /// <summary>배터리는 퍼센트가 아니라 3분류로 다룬다(일반/충전/부족).
         /// 노치 테두리를 통째로 칠하면 노치에서 가장 밝은 요소가 되어 beam과 색이 섞이므로,
         /// 안쪽 우측의 작은 점으로만 조용히 알리고 펼치면 퍼센트를 텍스트로 보여준다.</summary>
@@ -36,10 +42,9 @@ namespace TopDock
             // 일반 상태에서는 아무것도 그리지 않는다 — 조용한 게 기본값.
             if (_batteryLevel == BatteryLevel.Normal)
             {
-                BatteryDot.Visibility = Visibility.Collapsed;
-                BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
-                BatteryDot.Opacity = 1;
-                _batteryPulseRunning = false;
+                HideBatteryDot(BatteryDot);
+                HideBatteryDot(MediaBatteryDot);
+                StopBatteryPulse();
                 ExpandedBatteryPanel.Visibility = Visibility.Collapsed;
                 return;
             }
@@ -63,46 +68,83 @@ namespace TopDock
 
             BatteryDotCore.Fill = core;
             BatteryDotGlow.Fill = glow;
+            MediaBatteryDotCore.Fill = core;
+            MediaBatteryDotGlow.Fill = glow;
             ExpandedBatteryDot.Fill = core;
 
-            // 점은 접힌 기본 아일랜드에서만, 퍼센트 텍스트는 펼친 화면에서만.
+            // 점은 접힌 아일랜드에만(기본·미디어 재생 중 모두), 퍼센트 텍스트는 펼친 기본 화면에만.
             BatteryDot.Visibility = _currentViewMode == ViewMode.IdleCompact
+                ? Visibility.Visible : Visibility.Collapsed;
+            MediaBatteryDot.Visibility = _currentViewMode == ViewMode.MediaCompact
                 ? Visibility.Visible : Visibility.Collapsed;
             ExpandedBatteryPanel.Visibility = _currentViewMode == ViewMode.IdleExpanded
                 ? Visibility.Visible : Visibility.Collapsed;
             ExpandedBatteryText.Text =
                 $"{(_batteryLevel == BatteryLevel.Charging ? "충전" : "부족")} {Math.Round(_batteryPercent * 100)}%";
 
+            // 점이 보이는 뷰는 한 번에 하나뿐이라, 애니메이션도 보이는 점에만 건다.
+            FrameworkElement? dot = _currentViewMode == ViewMode.MediaCompact ? MediaBatteryDot
+                : _currentViewMode == ViewMode.IdleCompact ? BatteryDot
+                : null;
+
+            if (dot == null)
+            {
+                StopBatteryPulse();
+                return;
+            }
+
             if (flash)
             {
                 // 꽂는 순간: 밝게 나타났다가 잠깐 어두워지고, 끝나면 pulse로 넘어간다.
-                BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
-                BatteryDot.Opacity = 1;
+                dot.BeginAnimation(UIElement.OpacityProperty, null);
+                dot.Opacity = 1;
                 var blink = new DoubleAnimation(1.0, 0.35, new Duration(TimeSpan.FromMilliseconds(260)))
                 {
                     AutoReverse = true,
                 };
-                blink.Completed += (_, _) => StartBatteryPulse();
-                BatteryDot.BeginAnimation(UIElement.OpacityProperty, blink);
+                blink.Completed += (_, _) =>
+                {
+                    // 깜박이는 사이에 뷰가 바뀌었으면 그 점은 이제 남의 것이다
+                    if (dot.Visibility == Visibility.Visible) StartBatteryPulse(dot);
+                };
+                dot.BeginAnimation(UIElement.OpacityProperty, blink);
             }
             else
             {
-                StartBatteryPulse();
+                StartBatteryPulse(dot);
             }
         }
 
-        /// <summary>충전 중에만 은은하게 숨쉬게 한다. 부족은 고정 — 경고가 흔들리면 거슬린다.</summary>
-        private void StartBatteryPulse()
+        private static void HideBatteryDot(FrameworkElement dot)
         {
-            bool shouldPulse = _batteryLevel == BatteryLevel.Charging;
-            if (shouldPulse == _batteryPulseRunning) return;
+            dot.Visibility = Visibility.Collapsed;
+            dot.BeginAnimation(UIElement.OpacityProperty, null);
+            dot.Opacity = 1;
+        }
 
-            _batteryPulseRunning = shouldPulse;
-            BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
-            BatteryDot.Opacity = 1;
-            if (!shouldPulse) return;
+        /// <summary>숨쉬던 점을 멈추고 원래 불투명도로 돌려놓는다.</summary>
+        private void StopBatteryPulse()
+        {
+            if (_pulsingDot == null) return;
+            _pulsingDot.BeginAnimation(UIElement.OpacityProperty, null);
+            _pulsingDot.Opacity = 1;
+            _pulsingDot = null;
+        }
 
-            BatteryDot.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
+        /// <summary>충전 중에만 은은하게 숨쉬게 한다. 부족은 고정 — 경고가 흔들리면 거슬린다.</summary>
+        private void StartBatteryPulse(FrameworkElement dot)
+        {
+            if (_batteryLevel != BatteryLevel.Charging)
+            {
+                StopBatteryPulse();
+                return;
+            }
+            if (ReferenceEquals(_pulsingDot, dot)) return; // 이미 이 점이 숨쉬는 중
+
+            StopBatteryPulse();
+            _pulsingDot = dot;
+            dot.Opacity = 1;
+            dot.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
             {
                 From = 0.45,
                 To = 1.0,

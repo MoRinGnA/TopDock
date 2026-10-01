@@ -408,7 +408,7 @@ namespace TopDock
                         var animEase = new QuadraticEase();
                         DoubleAnimation widthAnim = new DoubleAnimation { To = newWidth, Duration = animDuration, EasingFunction = animEase };
                         NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
-                        UpdateGlowDimensions(newWidth, 38, 19, animDuration, animEase);
+                        UpdateGlowDimensions(newWidth, 38, animDuration, animEase);
                     }
                 }
             }

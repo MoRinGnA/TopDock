@@ -94,19 +94,83 @@ namespace TopDock
         //    앨범색·시간대 팔레트 등 기존 엠비언트 라이트는 전부 제거됐다.
 
         /// <summary>노치 크기 변화에 맞춰 beam을 함께 모핑한다(본체와 같은 크기 유지).</summary>
-        private void UpdateGlowDimensions(double targetWidth, double targetHeight, double targetRadius, Duration duration, IEasingFunction ease)
+        private void UpdateGlowDimensions(double targetWidth, double targetHeight, Duration duration, IEasingFunction ease)
         {
             var wAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
             var hAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
-            var rAnim = new DoubleAnimation { To = targetRadius, Duration = duration, EasingFunction = ease };
 
             Timeline.SetDesiredFrameRate(wAnim, 60);
             Timeline.SetDesiredFrameRate(hAnim, 60);
-            Timeline.SetDesiredFrameRate(rAnim, 60);
 
             NotchBeam.BeginAnimation(WidthProperty, wAnim);
             NotchBeam.BeginAnimation(HeightProperty, hAnim);
-            NotchBeam.BeginAnimation(Controls.BorderBeam.CornerRadiusProperty, rAnim);
+        }
+
+        // ── 모서리 반경 ──
+        // WPF에는 CornerRadius용 애니메이션이 없다 — Border.CornerRadius는 CornerRadius 타입인데
+        // Thickness처럼 대응하는 *Animation 클래스가 제공되지 않는다(실제로 없음을 확인).
+        // 그래서 프레임을 직접 돌린다. 빛(BorderBeam.CornerRadius는 double)과 본체에 같은 값을
+        // 밀어주므로 도는 동안에도 둘이 벌어지지 않는다 — 예전에는 본체만 즉시 목표 반경으로
+        // 튀어서, 펼친 아일랜드가 접힐 때 빛이 본체 모서리에서 떨어져 나간 것처럼 보였다.
+
+        private DispatcherTimer? _radiusTimer;
+        private long _radiusStart;
+        private double _radiusFrom;
+        private double _radiusTo;
+        private double _radiusTotalMs;
+        private IEasingFunction? _radiusEase;
+
+        /// <summary>본체와 빛의 모서리 반경을 크기 애니메이션과 같은 길이·곡선으로 함께 바꾼다.</summary>
+        private void AnimateNotchRadius(double target, Duration duration, IEasingFunction ease)
+        {
+            StopNotchRadiusAnimation();
+
+            double from = NotchBorder.CornerRadius.TopLeft;
+            _radiusTotalMs = duration.TimeSpan.TotalMilliseconds;
+
+            // 반경이 거의 안 바뀌는 전환(기본↔미디어 접힘 등)은 프레임을 돌릴 이유가 없다
+            if (_radiusTotalMs <= 1 || Math.Abs(target - from) < 0.5)
+            {
+                SetNotchRadius(target);
+                return;
+            }
+
+            _radiusFrom = from;
+            _radiusTo = target;
+            _radiusEase = ease;
+            _radiusStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            _radiusTimer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(8),
+            };
+            _radiusTimer.Tick += RadiusTimer_Tick;
+            _radiusTimer.Start();
+            RadiusTimer_Tick(null, EventArgs.Empty); // 첫 프레임을 기다리지 않고 바로 출발
+        }
+
+        private void RadiusTimer_Tick(object? sender, EventArgs e)
+        {
+            double elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - _radiusStart) * 1000.0
+                               / System.Diagnostics.Stopwatch.Frequency;
+            double t = Math.Clamp(elapsedMs / _radiusTotalMs, 0, 1);
+            SetNotchRadius(_radiusFrom + (_radiusTo - _radiusFrom) * (_radiusEase?.Ease(t) ?? t));
+            if (t >= 1) StopNotchRadiusAnimation();
+        }
+
+        /// <summary>본체와 빛에 같은 반경을 먹인다.</summary>
+        private void SetNotchRadius(double radius)
+        {
+            NotchBorder.CornerRadius = new CornerRadius(radius);
+            NotchBeam.CornerRadius = radius;
+        }
+
+        private void StopNotchRadiusAnimation()
+        {
+            if (_radiusTimer == null) return;
+            _radiusTimer.Stop();
+            _radiusTimer.Tick -= RadiusTimer_Tick;
+            _radiusTimer = null;
         }
 
         private double CalculateCompactWidth()
@@ -117,8 +181,11 @@ namespace TopDock
             double titleWidth = MeasureTextWidth(title, 13.5, FontWeights.SemiBold);
             double lyricWidth = MeasureTextWidth(lyric, 13, FontWeights.Medium);
 
+            // 35 = 좌우 여백 + 이퀄라이저 폭, 20 = 그 오른쪽 배터리 점 자리.
+            // 점은 대부분 숨겨져 있지만 자리는 항상 비워 둔다 — 재생 중에 충전을 시작해도
+            // 폭을 다시 계산하러 들어갈 필요가 없다.
             double baseWidth = 45;
-            double calculated = baseWidth + titleWidth + lyricWidth + 35;
+            double calculated = baseWidth + titleWidth + lyricWidth + 35 + BatteryDotSlotWidth;
             return Math.Clamp(calculated, 320, 800);
         }
 
@@ -228,7 +295,6 @@ namespace TopDock
             }
 
             SetViewActive(activeView, duration, ease);
-            NotchBorder.CornerRadius = new CornerRadius(targetRadius);
 
             // 배터리 표시는 뷰에 따라 자리만 바뀐다 — 접힌 아일랜드는 점, 펼치면 퍼센트.
             ApplyBatteryIndicator();
@@ -245,7 +311,9 @@ namespace TopDock
             NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
             NotchBorder.BeginAnimation(Border.HeightProperty, heightAnim);
 
-            UpdateGlowDimensions(targetWidth, targetHeight, targetRadius, duration, ease);
+            // 반경은 크기와 같은 길이·곡선으로 움직여야 빛이 본체에 붙어 있는다
+            AnimateNotchRadius(targetRadius, duration, ease);
+            UpdateGlowDimensions(targetWidth, targetHeight, duration, ease);
 
             DoubleAnimation mainContainerHeightAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
             Timeline.SetDesiredFrameRate(mainContainerHeightAnim, 60);
