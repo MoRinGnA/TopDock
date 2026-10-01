@@ -163,24 +163,6 @@
                            Foreground="#FFFFFF" Margin="10,0,0,0" VerticalAlignment="Center" Width="30"/>
             </StackPanel>
 
-            <!-- 스폰서 스킵 -->
-            <TextBlock Text="스폰서 스킵" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
-            <CheckBox x:Name="SponsorSkipEnabledCheck" Content="스폰서 구간 스킵 기능 사용"
-                      Margin="0,2,0,4" Checked="SponsorSkipEnabled_Changed" Unchecked="SponsorSkipEnabled_Changed"/>
-            <StackPanel x:Name="SponsorCategoryPanel" Margin="16,0,0,0">
-                <TextBlock Text="스킵 방식" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
-                <ComboBox x:Name="SponsorSkipModeCombo" Style="{StaticResource DarkCombo}" Width="280"
-                          HorizontalAlignment="Left" Margin="0,0,0,6" SelectedIndex="0">
-                    <ComboBoxItem Content="자동 — 구간 진입 시 즉시 건너뛰기"/>
-                    <ComboBoxItem Content="수동 — 마커만 표시, 건너뛰기 버튼 제공"/>
-                </ComboBox>
-                <TextBlock Text="표시할 구간 카테고리" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
-                <CheckBox x:Name="SponsorSkipIntroCheck" Content="인트로 (intro)" Margin="0,2,0,4"/>
-                <CheckBox x:Name="SponsorSkipOutroCheck" Content="아웃트로 (outro)" Margin="0,2,0,4"/>
-                <CheckBox x:Name="SponsorSkipIntermissionCheck" Content="인터미션/자기소개 (intermission)" Margin="0,2,0,4"/>
-                <CheckBox x:Name="SponsorSkipMusicOfftopicCheck" Content="음악과 무관한 구간 (music_offtopic)" Margin="0,2,0,6"/>
-            </StackPanel>
-
             <!-- AI 비서 -->
             <TextBlock Text="AI 비서" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>
             <CheckBox x:Name="AssistantEnabledCheck" Content="AI 비서 사용 (핫키: Ctrl+Shift+Space)"

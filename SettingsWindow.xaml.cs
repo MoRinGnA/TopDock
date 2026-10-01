@@ -27,18 +27,6 @@ namespace TopDock
             TopMarginSlider.Value = cfg.TopMargin;
             TopMarginValueText.Text = ((int)cfg.TopMargin).ToString();
 
-            SponsorSkipEnabledCheck.IsChecked = cfg.SponsorSkipEnabled;
-            SponsorSkipModeCombo.SelectedIndex = cfg.SponsorSkipMode switch
-            {
-                "manual" => 1,
-                _ => 0 // auto
-            };
-            SponsorSkipIntroCheck.IsChecked = cfg.SponsorSkipIntro;
-            SponsorSkipOutroCheck.IsChecked = cfg.SponsorSkipOutro;
-            SponsorSkipIntermissionCheck.IsChecked = cfg.SponsorSkipIntermission;
-            SponsorSkipMusicOfftopicCheck.IsChecked = cfg.SponsorSkipMusicOfftopic;
-            SponsorCategoryPanel.IsEnabled = cfg.SponsorSkipEnabled;
-
             ApiKeyBox.Password = cfg.YouTubeApiKey;
 
             AssistantEnabledCheck.IsChecked = cfg.AssistantEnabled;
@@ -104,14 +92,6 @@ namespace TopDock
             }
         }
 
-        private void SponsorSkipEnabled_Changed(object sender, RoutedEventArgs e)
-        {
-            if (SponsorCategoryPanel != null)
-            {
-                SponsorCategoryPanel.IsEnabled = SponsorSkipEnabledCheck.IsChecked == true;
-            }
-        }
-
         private void SaveConfigFromUi()
         {
             var cfg = ConfigService.Current;
@@ -120,13 +100,6 @@ namespace TopDock
             cfg.ShowClipboardToast = ShowClipboardToastCheck.IsChecked == true;
 
             cfg.TopMargin = (int)TopMarginSlider.Value;
-
-            cfg.SponsorSkipEnabled = SponsorSkipEnabledCheck.IsChecked == true;
-            cfg.SponsorSkipMode = SponsorSkipModeCombo.SelectedIndex == 1 ? "manual" : "auto";
-            cfg.SponsorSkipIntro = SponsorSkipIntroCheck.IsChecked == true;
-            cfg.SponsorSkipOutro = SponsorSkipOutroCheck.IsChecked == true;
-            cfg.SponsorSkipIntermission = SponsorSkipIntermissionCheck.IsChecked == true;
-            cfg.SponsorSkipMusicOfftopic = SponsorSkipMusicOfftopicCheck.IsChecked == true;
 
             cfg.YouTubeApiKey = ApiKeyBox.Password.Trim();
 

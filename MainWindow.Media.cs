@@ -51,9 +51,6 @@ namespace TopDock
                     {
                         SwitchViewMode(_isExpanded ? ViewMode.MediaExpanded : ViewMode.MediaCompact);
                     }
-
-                    // 새 트랙의 스폰서 구간을 백그라운드로 조회 (videoId → SponsorBlock)
-                    _ = _sponsorSkip.LoadSegmentsForTrackAsync(key, media.Title, media.Artist);
                 }
 
                 bool isValidThumbnail = false;
@@ -198,43 +195,11 @@ namespace TopDock
         {
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
-                // 스폰서/인트로 등 스킵 대상 구간 진입 시 자동 건너뛰기 (auto 모드 한정)
-                var skipTarget = _sponsorSkip.GetSkipTarget(currentPos, duration);
-                if (skipTarget.HasValue)
-                {
-                    _ = _mediaService.TrySeekAsync(skipTarget.Value);
-                    SponsorSkipButton.Visibility = Visibility.Collapsed;
-                }
-                else if (_sponsorSkip.IsInSkipSegment(currentPos, duration))
-                {
-                    // manual 모드: 흐름은 끊지 않고 우상단에 건너뛰기 버튼만 노출
-                    if (SponsorSkipButton.Visibility != Visibility.Visible)
-                    {
-                        SponsorSkipButton.Visibility = Visibility.Visible;
-                    }
-                }
-                else
-                {
-                    SponsorSkipButton.Visibility = Visibility.Collapsed;
-                }
-
                 UpdateTimelineDisplay(currentPos, duration);
                 // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤
                 var lyricPos = _lyricsService.GetAdjustedPosition(currentPos + LyricLookahead, duration);
                 UpdateLyricsDisplay(lyricPos);
             }
-        }
-
-        private async void SponsorSkipButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_mediaService.GetExactPosition(out var pos, out var dur))
-            {
-                if (_sponsorSkip.GetManualSkipTarget(pos, dur) is { } target)
-                {
-                    await _mediaService.TrySeekAsync(target).ConfigureAwait(true);
-                }
-            }
-            SponsorSkipButton.Visibility = Visibility.Collapsed;
         }
 
         private void UpdateTimelineDisplay(TimeSpan currentPos, TimeSpan duration)
@@ -254,62 +219,7 @@ namespace TopDock
                 CurrentTimeText.Text = "0:00";
                 TotalTimeText.Text = "0:00";
             }
-
-            RenderProgressMarkers(duration);
         }
-
-        private void RenderProgressMarkers(TimeSpan duration)
-        {
-            try
-            {
-                if (!(_sponsorSkip.HasSegments && duration.TotalSeconds > 0))
-                {
-                    if (ProgressMarkerCanvas.Children.Count > 0) ProgressMarkerCanvas.Children.Clear();
-                    return;
-                }
-
-                double width = ExpandedProgressBar.ActualWidth;
-                if (width <= 0) return;
-
-                // 50ms 타이머마다 재생성하지 않도록, 구성이 바뀐 경우에만 다시 그린다
-                string signature = $"{_sponsorSkip.Segments.Count}:{duration.TotalSeconds:F1}:{width:F0}";
-                if (signature == _lastMarkerSignature) return;
-                _lastMarkerSignature = signature;
-
-                ProgressMarkerCanvas.Children.Clear();
-
-                foreach (var seg in _sponsorSkip.Segments)
-                {
-                    if (seg.StartTime >= duration) continue;
-
-                    double left = Math.Clamp(seg.StartTime.TotalSeconds / duration.TotalSeconds, 0, 1) * width;
-                    double segWidth = Math.Clamp(seg.Duration.TotalSeconds / duration.TotalSeconds, 0, 1) * width;
-                    segWidth = Math.Max(3, segWidth);
-
-                    var rect = new System.Windows.Shapes.Rectangle
-                    {
-                        Width = segWidth,
-                        Height = 4,
-                        RadiusX = 1.5,
-                        RadiusY = 1.5,
-                        Fill = GetSegmentBrush(seg.Category),
-                        Opacity = 0.9
-                    };
-                    System.Windows.Controls.Canvas.SetLeft(rect, Math.Min(left, Math.Max(0, width - 3)));
-                    ProgressMarkerCanvas.Children.Add(rect);
-                }
-            }
-            catch { }
-        }
-
-        private static Brush GetSegmentBrush(string category) => category switch
-        {
-            "music_offtopic" => new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A)),
-            "intro" => new SolidColorBrush(Color.FromRgb(0x00, 0xC7, 0xB7)),
-            "outro" => new SolidColorBrush(Color.FromRgb(0x5E, 0x5C, 0xE6)),
-            "intermission" => new SolidColorBrush(Color.FromRgb(0xBF, 0x5A, 0xF2)),
-            _ => new SolidColorBrush(Color.FromRgb(0x00, 0xD1, 0x66)) // sponsor
-        };
 
         private async Task LoadLyricsAsync(string rawTitle, string rawArtist)
         {

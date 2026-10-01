@@ -59,9 +59,6 @@ namespace TopDock
         {
             var cfg = ConfigService.Current;
 
-            _sponsorSkip.IsEnabled = cfg.SponsorSkipEnabled;
-            _sponsorSkip.Mode = cfg.SponsorSkipMode;
-
             // AI 비서 핫키 등록 상태를 설정과 동기화
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)
@@ -80,13 +77,6 @@ namespace TopDock
             if (!HasMedia)
             {
                 _batteryService.ForceUpdate();
-            }
-
-            // 스폰서 카테고리 설정이 바뀌었으면 현재 트랙 구간을 다시 조회
-            if (HasMedia && _mediaService.CurrentMedia != null)
-            {
-                _ = _sponsorSkip.LoadSegmentsForTrackAsync(
-                    _lastMediaKey, _mediaService.CurrentMedia.Title, _mediaService.CurrentMedia.Artist);
             }
         }
 

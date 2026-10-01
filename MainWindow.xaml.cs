@@ -119,11 +119,9 @@ namespace TopDock
         private readonly LyricsService _lyricsService;
         private readonly BatteryService _batteryService;
         private readonly NotificationService _notificationService;
-        private readonly SponsorSkipService _sponsorSkip;
         private readonly AssistantService _assistant;
         private readonly AssistantTools _assistantTools;
         private SettingsWindow? _settingsWindow;
-        private string _lastMarkerSignature = string.Empty;
 
         // ── AI 비서 상태 ──
         private CancellationTokenSource? _assistantCts;
@@ -180,7 +178,6 @@ namespace TopDock
             _lyricsService = new LyricsService();
             _batteryService = new BatteryService();
             _notificationService = new NotificationService();
-            _sponsorSkip = new SponsorSkipService { IsEnabled = ConfigService.Current.SponsorSkipEnabled, Mode = ConfigService.Current.SponsorSkipMode };
             _assistant = new AssistantService();
 
             // 도구 실행기: 실제 기기 조작은 전부 여기서, 시각 연출은 이벤트로 이 창이 붙는다.
@@ -377,10 +374,10 @@ namespace TopDock
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
             _progressTimer.Stop();
-            StopNotchRadiusAnimation();
             _clockTimer.Stop();
             _volumeHudTimer?.Stop();
             _emptyMediaDebounceTimer?.Stop();
+            StopNotchRadiusAnimation();
             StopEqualizerAnimation();
 
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
@@ -394,7 +391,6 @@ namespace TopDock
             _assistantCts?.Cancel();
             _assistant.ResetConversation();
 
-            _sponsorSkip.Dispose();
             _audioService.Dispose();
             _mediaService.Dispose();
             _lyricsService.Dispose();
