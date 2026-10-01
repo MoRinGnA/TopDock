@@ -7,4 +7,4 @@ obj/
 node_modules/
 battery/dist/
 battery/ssr-manifest.json
-
+dist/
