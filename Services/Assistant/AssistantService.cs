@@ -26,8 +26,8 @@ namespace TopDock.Services
 
         public event Action<string>? DeltaReceived;
 
-        /// <summary>도구 실행기 — MainWindow가 등록해 실제 기기 조작을 수행한다.</summary>
-        public Func<AiToolCall, Task<string>>? ToolExecutor { get; set; }
+        /// <summary>도구 모음 — 호스트가 만들어 등록한다. 이 클래스는 UI를 모른다.</summary>
+        public AssistantTools? Tools { get; set; }
 
         // MainWindow가 갱신해서 넣어주는 최신 컨텍스트 (스레드 안전 위해 스냅샷으로만 읽음)
         private volatile AssistantContext _context = new();
@@ -60,7 +60,7 @@ namespace TopDock.Services
 
         /// <summary>
         /// 사용자 메시지를 보내고 스트리밍으로 답변을 받는다(DeltaReceived로 조각 전달).
-        /// 모델이 도구 호출을 요청하면 ToolExecutor로 실행 → 결과를 돌려주고 최종 텍스트가 나올 때까지 반복한다.
+        /// 모델이 도구 호출을 요청하면 Tools로 실행 → 결과를 돌려주고 최종 텍스트가 나올 때까지 반복한다.
         /// </summary>
         public async Task<string> SendAsync(string userMessage, CancellationToken ct)
         {
@@ -85,7 +85,7 @@ namespace TopDock.Services
             for (int round = 0; round < MaxToolRounds; round++)
             {
                 AiTurnResult result = await _client.StreamChatWithToolsAsync(
-                    messages, system, ToolExecutor != null ? AssistantTools.All : null, ct).ConfigureAwait(false);
+                    messages, system, Tools?.Schema, ct).ConfigureAwait(false);
 
                 if (result.ToolCalls.Count == 0)
                 {
@@ -125,17 +125,10 @@ namespace TopDock.Services
 
                 foreach (AiToolCall call in result.ToolCalls)
                 {
-                    string output;
-                    try
-                    {
-                        output = ToolExecutor != null
-                            ? await ToolExecutor(call).ConfigureAwait(false)
-                            : "도구 실행기가 등록되지 않았습니다.";
-                    }
-                    catch (Exception ex)
-                    {
-                        output = $"도구 실행 실패: {ex.Message}";
-                    }
+                    // 실행기(AssistantTools)가 자체적으로 오류를 잡아 문장으로 돌려준다.
+                    string output = Tools != null
+                        ? await Tools.ExecuteAsync(call, ct).ConfigureAwait(false)
+                        : "도구 실행기가 등록되지 않았습니다.";
                     messages.Add(new() { ["role"] = "tool", ["tool_call_id"] = call.Id, ["content"] = output });
                 }
             }
@@ -153,63 +146,6 @@ namespace TopDock.Services
                 }
             }
             return full;
-        }
-
-        /// <summary>비서가 사용할 수 있는 기기 조작 도구 목록 (OpenAI 호환 function 스키마).</summary>
-        private static class AssistantTools
-        {
-            public static readonly IReadOnlyList<object?> All = new List<object?>
-            {
-                Fn("media_play_pause", "현재 재생 중인 미디어를 재생/일시정지 토글한다",
-                    new Dictionary<string, object?>(), Array.Empty<string>()),
-                Fn("media_next", "다음 곡으로 건너뛴다",
-                    new Dictionary<string, object?>(), Array.Empty<string>()),
-                Fn("media_previous", "이전 곡으로 돌아간다",
-                    new Dictionary<string, object?>(), Array.Empty<string>()),
-                Fn("set_volume", "시스템 마스터 볼륨을 지정한 값으로 설정한다",
-                    new Dictionary<string, object?>
-                    {
-                        ["volume"] = new Dictionary<string, object?> { ["type"] = "integer", ["description"] = "0~100" },
-                    }, new[] { "volume" }),
-                Fn("open_app", "앱을 실행한다 (예: brave, notepad, spotify, 계산기)",
-                    new Dictionary<string, object?>
-                    {
-                        ["app"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "앱 이름 또는 실행 파일명" },
-                    }, new[] { "app" }),
-                Fn("open_url", "기본 브라우저(또는 지정한 브라우저)로 URL을 연다",
-                    new Dictionary<string, object?>
-                    {
-                        ["url"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "http/https URL" },
-                        ["browser"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "선택. brave/chrome/edge/firefox 등" },
-                    }, new[] { "url" }),
-                Fn("play_youtube", "유튜브에서 검색해 첫 영상(검색 실패 시 검색 결과 페이지)을 연다",
-                    new Dictionary<string, object?>
-                    {
-                        ["query"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "검색할 곡/영상 제목" },
-                        ["browser"] = new Dictionary<string, object?> { ["type"] = "string", ["description"] = "선택. brave/chrome/edge/firefox 등" },
-                    }, new[] { "query" }),
-            };
-
-            private static Dictionary<string, object?> Fn(
-                string name, string description,
-                Dictionary<string, object?> properties, string[] required)
-            {
-                return new Dictionary<string, object?>
-                {
-                    ["type"] = "function",
-                    ["function"] = new Dictionary<string, object?>
-                    {
-                        ["name"] = name,
-                        ["description"] = description,
-                        ["parameters"] = new Dictionary<string, object?>
-                        {
-                            ["type"] = "object",
-                            ["properties"] = properties,
-                            ["required"] = required,
-                        }
-                    }
-                };
-            }
         }
 
         private async Task<string> BuildSystemPromptAsync()
@@ -243,11 +179,4 @@ namespace TopDock.Services
             s.Length <= max ? s : s[..max] + "…(이하 생략)";
     }
 
-    /// <summary>시스템 프롬프트에 주입할 현재 상태 스냅샷.</summary>
-    public record AssistantContext(
-        string NowText = "",
-        string MediaText = "",
-        string LyricText = "",
-        string BatteryText = "",
-        string ClipboardText = "");
 }

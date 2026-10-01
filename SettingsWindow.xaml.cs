@@ -52,6 +52,7 @@ namespace TopDock
             };
             AiApiKeyBox.Password = cfg.AiApiKey;
             AiModelBox.Text = cfg.AiModel;
+            AssistantAllowedAppsBox.Text = string.Join(Environment.NewLine, cfg.AssistantAllowedApps);
             UpdateAiProviderUi();
         }
 
@@ -133,8 +134,22 @@ namespace TopDock
             cfg.AiProvider = ProviderFromIndex(AiProviderCombo.SelectedIndex);
             cfg.AiApiKey = AiApiKeyBox.Password.Trim();
             cfg.AiModel = AiModelBox.Text.Trim();
+            cfg.AssistantAllowedApps = ParseAllowedApps(AssistantAllowedAppsBox.Text);
 
             ConfigService.Save();
+        }
+
+        /// <summary>줄바꿈·쉼표로 구분된 앱 목록을 정리한다. 빈 줄은 버리고 중복은 하나만 남긴다.</summary>
+        private static List<string> ParseAllowedApps(string raw)
+        {
+            var result = new List<string>();
+            foreach (string part in raw.Split(new[] { '\r', '\n', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string app = part.Trim();
+                if (app.Length == 0) continue;
+                if (!result.Exists(x => string.Equals(x, app, StringComparison.OrdinalIgnoreCase))) result.Add(app);
+            }
+            return result;
         }
 
         private void Apply_Click(object sender, RoutedEventArgs e)

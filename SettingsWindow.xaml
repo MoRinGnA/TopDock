@@ -200,6 +200,12 @@
             <PasswordBox x:Name="AiApiKeyBox" Style="{StaticResource DarkPasswordBox}" Margin="0,0,0,8"/>
             <TextBlock Text="모델 (비우면 기본값 사용)" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
             <TextBox x:Name="AiModelBox" Style="{StaticResource DarkTextBox}" Margin="0,0,0,10"/>
+            <TextBlock Text="실행 허용 앱 (한 줄에 하나 — 실행 파일명 또는 전체 경로)" FontSize="12" Foreground="#8E8E93" Margin="0,0,0,4"/>
+            <TextBlock Text="여기 적힌 앱만 비서가 실행합니다. 한글 별칭(메모장·계산기·크롬 등)은 실행 파일명으로 자동 번역됩니다."
+                       FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,4"/>
+            <TextBox x:Name="AssistantAllowedAppsBox" Style="{StaticResource DarkTextBox}"
+                     AcceptsReturn="True" TextWrapping="Wrap" Height="76"
+                     VerticalScrollBarVisibility="Auto" Margin="0,0,0,10"/>
 
             <!-- YouTube API -->
             <TextBlock Text="YouTube API (선택)" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>

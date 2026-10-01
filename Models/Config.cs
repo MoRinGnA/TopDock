@@ -49,5 +49,13 @@ namespace TopDock.Models
         // 비워두면 프로바이더 기본값 사용
         [JsonPropertyName("aiModel")]
         public string AiModel { get; set; } = string.Empty;
+
+        // 비서가 실행할 수 있는 앱(실행 파일명 또는 전체 경로). 목록에 없으면 실행하지 않는다.
+        [JsonPropertyName("assistantAllowedApps")]
+        public List<string> AssistantAllowedApps { get; set; } = new()
+        {
+            "brave", "chrome", "msedge", "firefox",
+            "notepad", "calc", "spotify", "discord", "explorer", "steam",
+        };
     }
 }
