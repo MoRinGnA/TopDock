@@ -256,21 +256,17 @@ namespace TopDock
 
         private void ShowConversationOrb(Controls.OrbKind kind, string? statusOverride = null)
         {
-            ConversationOrb.Kind = kind;
-
-            // 대기(Breathing)와 응답 스트리밍(Composing)은 헤더의 작은 오브,
-            // 그 밖의 '작업 중' 상태(사고·검색·연결·파동 등)는 중앙 대형 오브로 보여준다.
-            // 둘을 같이 띄우면 '구체 2개'로 보이므로 항상 한쪽만 보인다.
-            bool central = kind is not (Controls.OrbKind.Breathing or Controls.OrbKind.Composing);
-            ConversationOrb.Visibility = central ? Visibility.Collapsed : Visibility.Visible;
+            // 오브 중심 몰입형 — 하나의 큰 오브가 항상 무대의 주인공이다.
+            // (예전엔 대기·응답은 헤더의 작은 오브, 작업 중은 중앙 오브로 갈아탔다)
             CenterOrb.Kind = kind;
-            CenterOrb.Visibility = central ? Visibility.Visible : Visibility.Collapsed;
-            AssistantLatestResponseText.Visibility = central ? Visibility.Collapsed : Visibility.Visible;
+            CenterOrb.Visibility = Visibility.Visible;
 
             // border-beam: 입력창은 응답 스트리밍 중에만 광선이 흐른다.
             InputBeam.Active = kind == Controls.OrbKind.Composing;
 
-            // 노치 테두리 = 살아있는 가장자리 — 상태에 맞춰 형태·색·속도를 다시 계산
+            // 노치 테두리 = 살아있는 가장자리 — '작업 중'일 때만 크게 돈다.
+            // 응답 텍스트는 비면 저절로 0 높이라 따로 숨길 필요가 없다.
+            bool central = kind is not (Controls.OrbKind.Breathing or Controls.OrbKind.Composing);
             _orbCentral = central;
             UpdateBeamState();
 
