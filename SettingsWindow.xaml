@@ -9,7 +9,8 @@
         Background="Transparent"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        FontFamily="{StaticResource AppFont}">
     <Window.Resources>
         <!-- 닫기 버튼 -->
         <Style x:Key="DarkCloseButton" TargetType="Button">

@@ -7,7 +7,8 @@
         AllowsTransparency="True"
         Background="Transparent"
         Topmost="True"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        FontFamily="{StaticResource AppFont}">
     <Window.Resources>
       <ResourceDictionary>
         <ResourceDictionary.MergedDictionaries>
@@ -121,7 +122,6 @@
             <Setter Property="Height" Value="24"/>
             <Setter Property="Padding" Value="12,0"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI, -apple-system"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -252,8 +252,7 @@
                                          Height="8" Minimum="0" Maximum="100" Value="50" VerticalAlignment="Center"/>
                             <TextBlock x:Name="VolumeText" Grid.Column="2" Text="50%"
                                        Foreground="#E5FFFFFF" FontSize="11" FontWeight="SemiBold"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
                         </Grid>
 
                         <!-- Idle compact: 얼굴만. 라벨 없이 캐릭터 자체가 아일랜드 -->
@@ -272,11 +271,9 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="NotifCompactAppText" Grid.Column="0" Text="App"
                                        Foreground="#0A84FF" FontSize="13.5" FontWeight="Bold"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                        VerticalAlignment="Center" Margin="0,-2,10,0"/>
                             <TextBlock x:Name="NotifCompactTitleText" Grid.Column="1" Text="Message"
                                        Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                        VerticalAlignment="Center" Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                         </Grid>
 
@@ -293,7 +290,6 @@
                                         <TextBox x:Name="AssistantInputBox"
                                                  Background="Transparent" BorderThickness="0" Foreground="#FFFFFF"
                                                  CaretBrush="#0A84FF" FontSize="13" FontWeight="Medium"
-                                                 FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                                  VerticalContentAlignment="Center"
                                                  KeyDown="AssistantInput_KeyDown"/>
                                     </Grid>
@@ -314,8 +310,7 @@
                                                           Visibility="Collapsed"/>
                                     <TextBlock x:Name="AssistantStatusText" Text=""
                                                VerticalAlignment="Center" Margin="10,0,0,0" MaxWidth="240"
-                                               TextTrimming="CharacterEllipsis"
-                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system">
+                                               TextTrimming="CharacterEllipsis">
                                         <TextBlock.Foreground>
                                             <!-- 원작 디테일: 흐린 잉크 위로 밝은 빛이 스치는 광택 스윕 -->
                                             <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"
@@ -338,8 +333,7 @@
                                               VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
                                     <TextBlock x:Name="AssistantLatestResponseText" Text=""
                                                Foreground="#E8FFFFFF" FontSize="13" FontWeight="Medium"
-                                               TextWrapping="Wrap"
-                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                               TextWrapping="Wrap"/>
                                 </ScrollViewer>
                             </StackPanel>
                         </DockPanel>
@@ -375,14 +369,11 @@
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
                             <TextBlock x:Name="NotifExpandedAppText" Grid.Row="0" Text="App Name"
-                                       Foreground="#0A84FF" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                       Foreground="#0A84FF" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBlock x:Name="NotifExpandedTitleText" Grid.Row="1" Text="Notification Title"
-                                       Foreground="#FFFFFF" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" MaxHeight="44"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system" Margin="0,0,0,4"/>
+                                       Foreground="#FFFFFF" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" MaxHeight="44" Margin="0,0,0,4"/>
                             <TextBlock x:Name="NotifExpandedBodyText" Grid.Row="2" Text="Body text here..."
-                                       Foreground="#E5FFFFFF" FontSize="13" FontWeight="Medium" TextWrapping="Wrap" MaxHeight="80" TextTrimming="WordEllipsis"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                       Foreground="#E5FFFFFF" FontSize="13" FontWeight="Medium" TextWrapping="Wrap" MaxHeight="80" TextTrimming="WordEllipsis"/>
                         </Grid>
 
                         <!-- Idle expanded: 얼굴 + 배터리 퍼센트 한 줄 (텍스트·버튼 최소화) -->
@@ -396,8 +387,7 @@
                                          Fill="#34C759" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="ExpandedBatteryText" Text=""
                                            Margin="6,0,0,0" VerticalAlignment="Center"
-                                           Foreground="#A8A8AD" FontSize="12" FontWeight="Medium"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                           Foreground="#A8A8AD" FontSize="12" FontWeight="Medium"/>
                             </StackPanel>
                         </StackPanel>
 
@@ -411,12 +401,10 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="CompactTitleText" Grid.Column="0" Text="재생 중인 미디어 없음"
                                        Foreground="#FFFFFF" FontSize="13.5" FontWeight="SemiBold"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                        LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                        VerticalAlignment="Center" Margin="0,-2,14,0" TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="CompactLyricText" Grid.Column="1" Text=""
                                        Foreground="#8E8E93" FontSize="13" FontWeight="Medium"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                        LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                        VerticalAlignment="Center" HorizontalAlignment="Center"
                                        Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
@@ -483,11 +471,9 @@
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                         <TextBlock x:Name="ExpandedTitleText" Text="재생 중인 미디어 없음"
                                                    Foreground="#FFFFFF" FontSize="14" FontWeight="Bold"
-                                                   FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                                    TextTrimming="CharacterEllipsis"/>
                                         <TextBlock x:Name="ExpandedArtistText" Text="" Foreground="#98989D"
                                                    FontSize="12" FontWeight="Medium"
-                                                   FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"
                                                    Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                 </Grid>
@@ -542,15 +528,12 @@
                                 <StackPanel x:Name="LyricsPanel">
                                     <TextBlock x:Name="PrevLyricText" Text="" Foreground="#555558"
                                                FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                               Margin="0,0,0,6"
-                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                               Margin="0,0,0,6"/>
                                     <TextBlock x:Name="CurrentLyricText" Text="" Foreground="#FFFFFF"
                                                FontSize="15" FontWeight="Bold" TextWrapping="Wrap" MaxHeight="44"
-                                               Margin="0,0,0,4"
-                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                               Margin="0,0,0,4"/>
                                     <TextBlock x:Name="NextLyricText" Text="" Foreground="#88888C"
-                                               FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                               FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                               FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </Grid>
 
@@ -593,8 +576,7 @@
                                          Height="6" Minimum="0" Maximum="100" Value="50" VerticalAlignment="Center"/>
                             <TextBlock x:Name="VolumeBarText" Grid.Column="2" Text="50%"
                                        Foreground="#E5FFFFFF" FontSize="11" FontWeight="SemiBold"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, -apple-system"/>
+                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
                         </Grid>
                     </Border>
 
@@ -646,8 +628,7 @@
                 <StackPanel>
                     <Grid Margin="12,8,6,0">
                         <TextBlock Text="CLIPBOARD" FontSize="9.5" FontWeight="SemiBold" Foreground="#8E8E93"
-                                   HorizontalAlignment="Left" VerticalAlignment="Center"
-                                   FontFamily="Segoe UI Variable Display, Segoe UI"/>
+                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
                         <Button x:Name="ClipboardClearButton" Style="{StaticResource GhostIconButton}"
                                 Width="20" Height="20" HorizontalAlignment="Right" VerticalAlignment="Center"
                                 Click="ClipboardClearButton_Click" ToolTip="기록 모두 지우기">

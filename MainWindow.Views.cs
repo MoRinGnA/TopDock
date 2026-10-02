@@ -194,6 +194,14 @@ namespace TopDock
             return Math.Clamp(calculated, 320, 800);
         }
 
+        /// <summary>
+        /// 화면과 같은 글꼴. App.xaml의 AppFont 하나만 본다 — 폭을 재는 쪽과 글자를 그리는
+        /// 쪽이 서로 다른 글꼴을 쓰면 컴팩트 노치 폭이 실제 글자 폭과 달라진다.
+        /// </summary>
+        private static FontFamily? _uiFont;
+        private static FontFamily UiFont =>
+            _uiFont ??= Application.Current?.Resources["AppFont"] as FontFamily ?? new FontFamily("Segoe UI");
+
         private double MeasureTextWidth(string text, double fontSize, FontWeight fontWeight)
         {
             if (string.IsNullOrEmpty(text)) return 0;
@@ -201,7 +209,7 @@ namespace TopDock
                 text,
                 CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight,
-                new Typeface(new FontFamily("Segoe UI Variable Display, Segoe UI, -apple-system"), FontStyles.Normal, fontWeight, FontStretches.Normal),
+                new Typeface(UiFont, FontStyles.Normal, fontWeight, FontStretches.Normal),
                 fontSize,
                 Brushes.White,
                 VisualTreeHelper.GetDpi(this).PixelsPerDip

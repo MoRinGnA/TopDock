@@ -14,4 +14,11 @@
     <Using Remove="System.Drawing" />
 </ItemGroup>
 
+<!-- Pretendard (SIL OFL 1.1, Fonts/LICENSE.txt) — UI 글꼴. NuGet이 아니라
+     리소스라, 기본 글롭에 안 잡히므로 직접 넣어 준다. OTF(CFF)가 TTF보다
+     가볍고(4종 6.3MB vs 10.7MB) WPF가 네 굵기를 모두 인식한다. -->
+<ItemGroup>
+    <Resource Include="Fonts/*.otf" />
+</ItemGroup>
+
 </Project>

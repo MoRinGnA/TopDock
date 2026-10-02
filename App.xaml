@@ -5,6 +5,12 @@
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <ResourceDictionary>
+            <!-- 앱의 유일한 글꼴 정의. 예전에는 같은 폰트 스택이 19곳에 흩어져 있었고
+                 설정 창은 지정이 아예 없어 WPF 기본 글꼴로 따로 렌더됐다.
+                 창이 이 리소스를 상속하므로 새 UI도 저절로 같은 글꼴을 쓴다.
+                 (Pretendard, SIL OFL 1.1 — Fonts/LICENSE.txt) -->
+            <FontFamily x:Key="AppFont">pack://application:,,,/Fonts/#Pretendard</FontFamily>
+
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Styles/NotchStyles.xaml"/>
             </ResourceDictionary.MergedDictionaries>
