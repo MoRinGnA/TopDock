@@ -105,6 +105,8 @@ namespace TopDock.Controls
         private readonly DispatcherTimer _timer;
         private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         private double _t;                // 애니메이션 시계(초)
+        private double _head;             // 혜성 헤드의 누적 위상 [0,1). 속도·둘레가 바뀌어도 연속이다.
+        private double _lastTick;         // 직전 틱 시각 — 위상 증가분(dt) 계산용
         private double _fade;             // 현재 불투명도
         private double _fadeFrom;
         private double _fadeStartTime = -1;
@@ -122,7 +124,16 @@ namespace TopDock.Controls
 
         private void OnTick(object? sender, EventArgs e)
         {
-            _t = Now;
+            double now = Now;
+
+            // 헤드 위상은 _t × Speed로 매번 새로 만들지 않고 증가분을 적분해 쌓는다.
+            // 곱셈으로 만들면 노치가 커질 때 _perimeter가(그리고 speedScale이) 바뀌는 만큼
+            // 이미 큰 _t가 통째로 곱해져 위상이 튼다 — 확장 순간 빛이 여러 바퀴 휙 돌던 원인.
+            double dt = Math.Clamp(now - _lastTick, 0.0, 0.1);
+            _lastTick = now;
+            _t = now;
+            _head += dt * Speed * Math.Clamp(240.0 / _perimeter, 0.30, 1.0);
+            _head -= Math.Floor(_head);
 
             if (_fadeStartTime >= 0)
             {
@@ -264,11 +275,11 @@ namespace TopDock.Controls
             double tailSpan = TailSpan * (large ? 1.12 : 1.0);
             double cometW = bw * (large ? 2.6 : 1.6) * Math.Min(lightScale, 2.2);
 
-            // 헤드 위상(회전) — Speed는 초당 바퀴 수(음수=반시계).
-            // 큰 표면에선 같은 '바퀴'가 훨씬 빠른 픽셀 속도라 놓친다 → 둘레를 기준으로 속도를 정규화.
-            double speedScale = Math.Clamp(240.0 / _perimeter, 0.30, 1.0);
-            double head = _t * Speed * speedScale;
-            head -= Math.Floor(head);
+            // 헤드 위상 — OnTick이 적분해 둔 값을 그대로 쓴다. 여기서 _t × Speed로 다시 만들면
+            // 노치가 커지는 동안 _perimeter가 바뀌는 만큼 위상이 튀어 빛이 여러 바퀴 휙 돈다.
+            // (큰 표면일수록 같은 '바퀴'가 훨씬 빠른 픽셀 속도라, 둘레로 속도를 정규화하는 것
+            //  자체는 OnTick 쪽에서 그대로 유지한다.)
+            double head = _head;
             // 느린 호흡 — 빛이 살아 숨쉬는 느낌
             double breathe = 0.86 + 0.14 * Math.Sin(_t * 1.6);
 
