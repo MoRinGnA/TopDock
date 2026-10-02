@@ -18,6 +18,9 @@ namespace TopDock
             bool track = HasMedia;
             bool playing = _mediaService.CurrentMedia?.IsPlaying == true;
             string log = "";
+            // 상태별 전체 밝기. 미디어만 눅인다 — 확장 노치에서 앨범색 빛이
+            // 다크 UI 위에 과하게 번쩍이던 것을 조금 가라앉힌다(다른 상태는 그대로).
+            double strength = 1.0;
 
             // 이퀄라이저 바도 같은 곡의 색 — 한 곡 안에서는 테두리와 바가 같은 색을 쓴다
             UpdateEqualizerAccent(track ? (_albumColor ?? ColorFromKey(_lastMediaKey)) : EqualizerIdleColor);
@@ -51,6 +54,7 @@ namespace TopDock
                 // 재생 중엔 크게 빠르게, 일시정지엔 얇게 느리게 — 곡의 색을 두고 운동만 달라진다.
                 NotchBeam.Form = playing ? Controls.BeamForm.Large : Controls.BeamForm.Line;
                 NotchBeam.Speed = playing ? 0.13 : 0.07;
+                strength = playing ? 0.80 : 0.90;
             }
             else
             {
@@ -61,6 +65,8 @@ namespace TopDock
                 NotchBeam.AccentColor = null;
                 NotchBeam.Speed = 0.09;
             }
+
+            NotchBeam.Strength = strength;
 
             if (log != _lastBeamState)
             {

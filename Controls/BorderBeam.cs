@@ -37,7 +37,7 @@ namespace TopDock.Controls
         private const double TailSpan = 0.46;     // 꼬리 길이(둘레 비율)
         private const double TailFalloff = 0.115; // 꼬리 감쇠
         private const double BloomGain = 1.3;
-        private const double AlbumHueSpread = 180.0; // Album 색에서 꼬리 끝까지 색상이 도는 각도(deg)
+        private const double AlbumHueSpread = 130.0; // Album 색에서 꼬리 끝까지 색상이 도는 각도(deg)
 
         /// <summary>액센트가 없을 때의 기본 빛 — 중립 화이트(앨범색이 오면 그 색으로 바뀐다).</summary>
         private static readonly Color DefaultAccent = Color.FromRgb(0xF0, 0xF3, 0xF8);
@@ -270,7 +270,7 @@ namespace TopDock.Controls
             // 약간은 번져야 혜성이 테두리 위의 선이 아니라 '공간을 채운 빛'으로 읽힌다.
             double wash = Math.Clamp((lightScale - 0.9) * 0.17, 0, 0.24);
             // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다
-            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.20) : 0.0;
+            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) : 0.0;
 
             double headSigma = HeadSigma * formScale * gain;
             double tailSpan = TailSpan * (large ? 1.12 : 1.0);
