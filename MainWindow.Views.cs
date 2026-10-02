@@ -272,7 +272,7 @@ namespace TopDock
                 case ViewMode.Assistant:
                     // 지시 콘솔은 컴팩트하게 — 큰 캔버스 대신 오브+결과+입력 3단 구성
                     targetWidth = 420;
-                    targetHeight = 224;
+                    targetHeight = 240;
                     targetRadius = 30;
                     activeView = AssistantView;
                     // 헤더 오버레이(오브+상태+버튼)는 본체 뷰와 독립적으로 함께 표시

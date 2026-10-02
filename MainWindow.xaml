@@ -308,7 +308,7 @@
                             <StackPanel>
                                 <!-- 오브+상태 헤더 (응답 흐름 위 한 줄) -->
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
-                                    <controls:ThinkingOrb x:Name="ConversationOrb" Width="38" Height="38"
+                                    <controls:ThinkingOrb x:Name="ConversationOrb" Width="46" Height="46"
                                                           Kind="Breathing" Ink="#F2F2F7"
                                                           VerticalAlignment="Center"
                                                           Visibility="Collapsed"/>
@@ -329,7 +329,7 @@
                                 </StackPanel>
 
                                 <!-- 사고 중 전용 중앙 오브: 지시 입력 직후 크게 표시, 첫 응답 조각 오면 숨김 -->
-                                <controls:ThinkingOrb x:Name="CenterOrb" Width="72" Height="72"
+                                <controls:ThinkingOrb x:Name="CenterOrb" Width="100" Height="100"
                                                       Kind="Working" Ink="#F2F2F7"
                                                       HorizontalAlignment="Center" Margin="0,8,0,8"
                                                       Visibility="Collapsed"/>

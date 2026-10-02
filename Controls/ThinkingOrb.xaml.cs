@@ -33,20 +33,42 @@ namespace TopDock.Controls
         private readonly List<Dot> _dots = new();
         private readonly List<Line> _lines = new();
 
-        private readonly Brush[] _alphaCache = new Brush[16];
-        private readonly Pen[] _penCache = new Pen[16];
-        private readonly Brush?[] _dotCache = new Brush?[256];
+        // 잉크는 점 수가 프레임당 1,500개를 넘는 모드(ring/ribbon)가 있어, 점마다 브러시를
+        // 새로 만들면 60fps에서 초당 10만 개를 할당해 GC 스터터가 생긴다. 원본은 점마다
+        // rgba 문자열을 칠하지만, 여기서는 (잉크 밝기 × 알파) 조합을 한 번 만들어 재사용한다.
+        private const int InkLevels = 64;
+        private const int AlphaLevels = 16;
+        private readonly Brush?[] _brushCache = new Brush?[InkLevels * AlphaLevels];
+        private readonly Pen?[] _penCache = new Pen?[InkLevels * AlphaLevels];
 
         public ThinkingOrb()
         {
             InitializeComponent();
             _timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromSeconds(TickSeconds) };
-            _timer.Tick += (s, e) => { _t += TickSeconds * Speed; InvalidateVisual(); };
+            _timer.Tick += (s, e) => { _t += TickSeconds * Speed * PresetSpeed(Kind); InvalidateVisual(); };
             IsVisibleChanged += (s, e) => { if (IsVisible) _timer.Start(); else _timer.Stop(); };
         }
 
         /// <summary>프리셋 speed 배수 — 원본 presets 테이블의 값.</summary>
         public double Speed { get; set; } = 1.0;
+
+        /// <summary>
+        /// 원본 presets.ts의 상태별 speed(64 크기 프리셋). 포트는 이걸 한동안 1.0으로 두고
+        /// 있어서 모든 오브가 원본보다 2~4배 느리게 돌았다 — 정지 화면처럼 굼떠 보였다.
+        /// </summary>
+        private static double PresetSpeed(OrbKind kind) => kind switch
+        {
+            OrbKind.Working => 1.885,
+            OrbKind.Searching => 2.015,
+            OrbKind.Solving => 1.82,
+            OrbKind.Listening => 4.388,
+            OrbKind.Connecting => 3.315,
+            OrbKind.Weaving => 1.625,
+            OrbKind.Composing => 2.34,
+            OrbKind.Breathing => 3.24,
+            OrbKind.Shaping => 2.405,
+            _ => 1.0,
+        };
 
         public static readonly DependencyProperty KindProperty = DependencyProperty.Register(
             nameof(Kind), typeof(OrbKind), typeof(ThinkingOrb),
@@ -144,53 +166,47 @@ namespace TopDock.Controls
 
         private static double RadiusScale(double size, double pow) => Math.Pow(size / 300.0, pow);
 
-        private Brush BrushFor(double alpha01)
+        /// <summary>
+        /// 점 하나의 잉크 브러시. 원본 core.paint와 같은 "어두운 배경" 규칙을 쓴다 —
+        /// white는 종이 위 잉크 값(0 = 가장 진한 잉크)이라 어두운 배경에서는 뒤집혀서,
+        /// white가 낮을수록(카메라에 가까운 점일수록) 밝다. 이전 포트는 이걸 뒤집지 않아
+        /// 가까운 점은 어둡게, 먼 점은 밝게 칠해져 공 하나가 흐린 회색 덩어리로 보였다.
+        /// </summary>
+        private Brush InkBrush(double white, double alpha01)
         {
-            int idx = Math.Clamp((int)(alpha01 * 15), 0, 15);
-            if (_alphaCache[idx] is Brush b) return b;
-            var brush = new SolidColorBrush(Color.FromArgb((byte)(idx * 255 / 15), Ink.R, Ink.G, Ink.B));
-            brush.Freeze();
-            _alphaCache[idx] = brush;
-            return brush;
-        }
+            int ii = (int)Math.Round((1 - Math.Clamp(white, 0, 1)) * (InkLevels - 1));
+            int ai = Math.Clamp((int)Math.Round(Math.Clamp(alpha01, 0, 1) * (AlphaLevels - 1)), 0, AlphaLevels - 1);
+            int key = ii * AlphaLevels + ai;
+            if (_brushCache[key] is Brush cached) return cached;
 
-        /// <summary>점 브러시 캐시 — (명도 16 × 알파 16) 256개면 충분하다.
-        /// 점 수가 프레임당 1,500개를 넘는 모드(ring/ribbon)가 있어, 브러시를 매번 새로 만들면
-        /// 60fps에서 초당 10만 개를 할당해 GC 스터터가 생긴다.</summary>
-        private Brush DotBrush(double white, double alpha01)
-        {
-            int wi = Math.Clamp((int)(white * 15), 0, 15);
-            int ai = Math.Clamp((int)(alpha01 * 15), 0, 15);
-            int key = (wi << 4) | ai;
-            if (_dotCache[key] is Brush cached) return cached;
-
-            // 원본 inkColor(dark): white가 낮을수록(뒤 점) 어둡다 — 밝은 잉크 톤으로 보간
-            double w = wi / 15.0;
-            byte chR = (byte)Math.Clamp(Ink.R * (0.35 + 0.65 * w), 0, 255);
-            byte chG = (byte)Math.Clamp(Ink.G * (0.35 + 0.65 * w), 0, 255);
-            byte chB = (byte)Math.Clamp(Ink.B * (0.35 + 0.65 * w), 0, 255);
-            var brush = new SolidColorBrush(Color.FromArgb((byte)(ai * 255 / 15), chR, chG, chB));
+            double b = ii / (double)(InkLevels - 1);   // 0 = 가장 먼 점(어둡게) … 1 = 가장 가까운 점(가장 밝게)
+            byte chR = (byte)Math.Round(Ink.R * b);
+            byte chG = (byte)Math.Round(Ink.G * b);
+            byte chB = (byte)Math.Round(Ink.B * b);
+            var brush = new SolidColorBrush(Color.FromArgb((byte)(ai * 255 / (AlphaLevels - 1)), chR, chG, chB));
             brush.Freeze();
-            _dotCache[key] = brush;
+            _brushCache[key] = brush;
             return brush;
         }
 
         private void OnInkChanged()
         {
-            Array.Clear(_alphaCache, 0, _alphaCache.Length);
+            Array.Clear(_brushCache, 0, _brushCache.Length);
             Array.Clear(_penCache, 0, _penCache.Length);
-            Array.Clear(_dotCache, 0, _dotCache.Length);
             InvalidateVisual();
         }
 
-        private Pen PenFor(double alpha01, double thickness)
+        /// <summary>connecting 웹의 선 펜. 점과 같은 잉크 규칙을 따른다.</summary>
+        private Pen PenFor(double white, double alpha01, double thickness)
         {
-            int idx = Math.Clamp((int)(alpha01 * 15), 0, 15);
-            var pen = _penCache[idx];
+            int ii = (int)Math.Round((1 - Math.Clamp(white, 0, 1)) * (InkLevels - 1));
+            int ai = Math.Clamp((int)Math.Round(Math.Clamp(alpha01, 0, 1) * (AlphaLevels - 1)), 0, AlphaLevels - 1);
+            int key = ii * AlphaLevels + ai;
+            var pen = _penCache[key];
             if (pen != null && pen.Thickness == thickness) return pen;
-            pen = new Pen(BrushFor(alpha01), thickness);
+            pen = new Pen(InkBrush(white, alpha01), thickness);
             pen.Freeze();
-            _penCache[idx] = pen;
+            _penCache[key] = pen;
             return pen;
         }
 
@@ -234,12 +250,12 @@ namespace TopDock.Controls
 
             // 원본 paintFrame: 선 먼저, 점은 z-sort 순서로
             foreach (Line l in _lines)
-                dc.DrawLine(PenFor(l.A, Math.Max(0.6, l.W)),
+                dc.DrawLine(PenFor(l.White, l.A, Math.Max(0.6, l.W)),
                     new Point(l.X1, l.Y1), new Point(l.X2, l.Y2));
 
             foreach (Dot d in _dots)
             {
-                dc.DrawEllipse(DotBrush(d.White, d.A), null, new Point(d.X, d.Y), d.R, d.R);
+                dc.DrawEllipse(InkBrush(d.White, d.A), null, new Point(d.X, d.Y), d.R, d.R);
             }
         }
 
