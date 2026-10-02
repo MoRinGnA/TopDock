@@ -32,12 +32,12 @@ namespace TopDock.Controls
         private const double FadeOutSec = 0.5;
 
         // ── 살아있는 가장자리 상수 ──
-        private const double BaseRim = 0.17;      // 상시 림 알파(어둑한 가장자리)
-        private const double HeadSigma = 0.020;   // 헤드 코어 반폭(둘레 비율)
-        private const double TailSpan = 0.34;     // 꼬리 길이(둘레 비율)
-        private const double TailFalloff = 0.085; // 꼬리 감쇠
-        private const double BloomGain = 0.9;
-        private const double AlbumHueSpread = 140.0; // Album 색에서 꼬리 끝까지 색상이 도는 각도(deg)
+        private const double BaseRim = 0.26;      // 상시 림 알파(어둑한 가장자리)
+        private const double HeadSigma = 0.026;   // 헤드 코어 반폭(둘레 비율)
+        private const double TailSpan = 0.46;     // 꼬리 길이(둘레 비율)
+        private const double TailFalloff = 0.115; // 꼬리 감쇠
+        private const double BloomGain = 1.3;
+        private const double AlbumHueSpread = 180.0; // Album 색에서 꼬리 끝까지 색상이 도는 각도(deg)
 
         /// <summary>액센트가 없을 때의 기본 빛 — 중립 화이트(앨범색이 오면 그 색으로 바뀐다).</summary>
         private static readonly Color DefaultAccent = Color.FromRgb(0xF0, 0xF3, 0xF8);
@@ -266,14 +266,15 @@ namespace TopDock.Controls
             // 밒의 굵기·블룸·헤드를 표면 크기에 비례해 키워 존재감을 유지한다.
             double lightScale = Math.Clamp(Math.Sqrt(w * h) / 65.0, 1.0, 3.2);
             double gain = Math.Sqrt(lightScale); // 굵기·헤드는 완만하게(과하면 뭉개진다)
-            // 안쪽 물들임 — 큰 표면에서만 빛이 패널 안으로 번지게 한다(작은 알약은 그대로)
-            double wash = Math.Clamp((lightScale - 1.2) * 0.12, 0, 0.16);
-            // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다(큰 표면 전용)
-            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 1.1) * 0.055, 0, 0.13) : 0.0;
+            // 안쪽 물들임 — 빛이 패널 안으로 번진다. 작은 알약(lightScale 1.0)에서도
+            // 약간은 번져야 혜성이 테두리 위의 선이 아니라 '공간을 채운 빛'으로 읽힌다.
+            double wash = Math.Clamp((lightScale - 0.9) * 0.17, 0, 0.24);
+            // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다
+            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.20) : 0.0;
 
             double headSigma = HeadSigma * formScale * gain;
             double tailSpan = TailSpan * (large ? 1.12 : 1.0);
-            double cometW = bw * (large ? 2.6 : 1.6) * Math.Min(lightScale, 2.2);
+            double cometW = bw * (large ? 3.2 : 2.0) * Math.Min(lightScale, 2.5);
 
             // 헤드 위상 — OnTick이 적분해 둔 값을 그대로 쓴다. 여기서 _t × Speed로 다시 만들면
             // 노치가 커지는 동안 _perimeter가 바뀌는 만큼 위상이 튀어 빛이 여러 바퀴 휙 돈다.
@@ -281,7 +282,7 @@ namespace TopDock.Controls
             //  자체는 OnTick 쪽에서 그대로 유지한다.)
             double head = _head;
             // 느린 호흡 — 빛이 살아 숨쉬는 느낌
-            double breathe = 0.86 + 0.14 * Math.Sin(_t * 1.6);
+            double breathe = 0.88 + 0.12 * Math.Sin(_t * 1.6);
 
             var clip = new RectangleGeometry(new Rect(0, 0, w, h), _radius, _radius);
             clip.Freeze();
@@ -325,8 +326,8 @@ namespace TopDock.Controls
         private void DrawBloom(DrawingContext dc, Color accent, double head, double fade, double breathe,
             double formScale, double headSigma, double tailSpan)
         {
-            double[] th = { 9.0, 5.4, 3.2, 1.8 };
-            double[] am = { 0.06, 0.12, 0.22, 0.40 };
+            double[] th = { 11.5, 6.8, 4.0, 2.2 };
+            double[] am = { 0.075, 0.15, 0.27, 0.48 };
             for (int i = 0; i < _ring.Count; i++)
             {
                 var p = _ring[i];
@@ -363,7 +364,7 @@ namespace TopDock.Controls
                     : accent;
 
                 // 헤드 코어는 흰색에 가깝게(열감), 꼬리로 갈수록 색
-                double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma)) * 0.9;
+                double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma)) * 1.0;
                 byte r = MixChannel(seg.R, 255, hot);
                 byte g = MixChannel(seg.G, 255, hot);
                 byte b = MixChannel(seg.B, 255, hot);

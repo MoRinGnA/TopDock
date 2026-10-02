@@ -629,7 +629,7 @@
                  안쪽으로 퍼지는 글로우가 보인다. NotchBorder 뒤에 두면 inner 레이어가 가려진다. -->
             <controls:BorderBeam x:Name="NotchBeam" Width="100" Height="38"
                                  HorizontalAlignment="Center" VerticalAlignment="Center"
-                                 CornerRadius="19" BorderWidth="1.2" Strength="0.9" Active="True"/>
+                                 CornerRadius="19" BorderWidth="1.2" Strength="1.0" Active="True"/>
         </Grid>
 
         <!-- 클립보드 기록 패널: 노치 아래 중앙에 내려온다 (Ctrl+Shift+V 또는 노치 클릭) -->
