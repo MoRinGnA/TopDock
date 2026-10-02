@@ -57,8 +57,7 @@
 <div align="center">
 
 ```text
-              ♪
-      성공회대학교 e-Class
+            
            YouTube
 
    41:00 ────────●───────── 19:33
