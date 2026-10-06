@@ -254,16 +254,18 @@ namespace TopDock
                     activeView = MediaCompactView;
                     break;
                 case ViewMode.MediaExpanded:
-                    // 가사가 있으면 가사 자리까지, 없으면 앨범아트+컨트롤 폭만
-                    targetWidth = LyricsExpected ? 620 : 276;
-                    targetHeight = 190;
-                    targetRadius = 36;
+                    // 2단 — 아트·제목·컨트롤이 한 줄, 그 아래 진행바·시간.
+                    // 카드 = 아트 줄 390 + 좌우 20. 가사를 보여줄 때만 가사 자리(약 283)를 더한다.
+                    // 높이 144는 내용(약 90) 위아래로 약 27씩 남는 값 — 120은 숨이 답답했다.
+                    targetWidth = LyricsExpected ? 748 : 430;
+                    targetHeight = 144;
+                    targetRadius = 30;
                     activeView = MediaExpandedView;
                     break;
                 case ViewMode.VolumeHud:
-                    targetWidth = _isExpanded ? (LyricsExpected ? 620 : 276) : 240;
-                    targetHeight = _isExpanded ? 190 : 38;
-                    targetRadius = _isExpanded ? 36 : 19;
+                    targetWidth = _isExpanded ? (LyricsExpected ? 748 : 430) : 240;
+                    targetHeight = _isExpanded ? 144 : 38;
+                    targetRadius = _isExpanded ? 30 : 19;
                     activeView = _isExpanded ? MediaExpandedView : VolumeHudView;
                     break;
                 case ViewMode.NotificationCompact:

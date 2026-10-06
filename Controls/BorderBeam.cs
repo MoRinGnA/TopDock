@@ -285,7 +285,7 @@ namespace TopDock.Controls
             double sizeFactor = Math.Clamp(lightScale, 1.0, 3.2);
 
             double headSigma = HeadSigma * formScale * gain;
-            double tailSpan = TailSpan * (large ? 1.10 : 1.0) * (0.55 + 0.18 * sizeFactor);
+            double tailSpan = TailSpan * (large ? 1.05 : 1.0) * (0.42 + 0.14 * sizeFactor);
             double cometW = bw * (large ? 2.4 : 2.0) * (1.0 + (sizeFactor - 1.0) * 0.35);
             double bloomScale = (large ? 1.6 : 1.0) * (1.0 + (sizeFactor - 1.0) * 0.30);
 

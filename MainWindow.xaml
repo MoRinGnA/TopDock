@@ -477,9 +477,9 @@
 
                         <!-- Media expanded -->
                         <Grid x:Name="MediaExpandedView" Opacity="0" IsHitTestVisible="False"
-                              Margin="16,16,16,16" VerticalAlignment="Center">
+                              Margin="20,20,20,20" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="230"/>
+                                <ColumnDefinition x:Name="PlayerCol" Width="390"/>
                                 <ColumnDefinition x:Name="LyricsDividerCol" Width="Auto"/>
                                 <ColumnDefinition x:Name="LyricsCol" Width="*"/>
                             </Grid.ColumnDefinitions>
@@ -488,18 +488,28 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <!-- Album art + title -->
+                                <!-- 2단 — 아트·제목·컨트롤을 한 줄에 모은다.
+                                     예전 3단(아트/진행바/컨트롤)은 내용보다 카드가 세로로 길었다. -->
                                 <Grid Grid.Row="0" Margin="0,0,0,14">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Border Grid.Column="0" Width="54" Height="54" CornerRadius="14"
                                             Margin="0,0,12,0" VerticalAlignment="Center"
-                                            Background="#1C1C1E" BorderBrush="#25FFFFFF" BorderThickness="0.5">
+                                            BorderBrush="#25FFFFFF" BorderThickness="0.5">
+                                        <!-- 썸네일을 안 주는 플레이어(브라우저 강의 등)에서는 이 자리 표시가 계속 남는다.
+                                             예전엔 앨범 브랜드 빨강(음표)이라 노치의 무채색 언어에서 혼자 튀었다 —
+                                             이제 조용한 그라데이션 타일 위의 반투명 음표로 비워 둔다. -->
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#2C2C31" Offset="0"/>
+                                                <GradientStop Color="#161618" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
                                         <Border.OpacityMask>
                                             <VisualBrush>
                                                 <VisualBrush.Visual>
@@ -511,11 +521,11 @@
                                             <Image x:Name="ExpandedAlbumArtImage" Stretch="UniformToFill"/>
                                             <Path x:Name="ExpandedDefaultIcon"
                                                   Data="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"
-                                                  Fill="#FA233B" Width="22" Height="22" Stretch="Uniform"
+                                                  Fill="#59FFFFFF" Width="23" Height="23" Stretch="Uniform"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Grid>
                                     </Border>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                         <TextBlock x:Name="ExpandedTitleText" Text="재생 중인 미디어 없음"
                                                    Foreground="#FFFFFF" FontSize="14" FontWeight="Bold"
                                                    TextTrimming="CharacterEllipsis"/>
@@ -523,10 +533,39 @@
                                                    FontSize="12" FontWeight="Medium"
                                                    Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
+
+                                    <!-- 컨트롤 묶음 — 클립보드 토글까지 같은 줄에 모아 세로를 줄인다 -->
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button x:Name="ClipboardToggleButton"
+                                                Style="{StaticResource GhostIconButton}" Width="22" Height="22"
+                                                Margin="0,0,10,0"
+                                                Click="ClipboardToggleButton_Click" ToolTip="클립보드 기록">
+                                            <Path Data="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+                                                  Stroke="#A8A8AD" StrokeThickness="2.2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                                  Width="11" Height="11" Stretch="Uniform"/>
+                                        </Button>
+                                        <Button Style="{StaticResource AppleButton}" Click="PrevButton_Click"
+                                                Width="32" Height="32" Margin="0,0,14,0">
+                                            <Path Data="M6 6h2v12H6zm3.5 6l8.5 6V6z"
+                                                  Fill="#FFFFFF" Width="15" Height="15" Stretch="Uniform"/>
+                                        </Button>
+                                        <Button Style="{StaticResource PlayCircleButton}" Click="PlayPauseButton_Click"
+                                                Width="38" Height="38" Margin="0,0,14,0" Cursor="Hand">
+                                            <Path x:Name="PlayPauseIcon" Data="M6 19h4V5H6v14zm8-14v14h4V5h-4z"
+                                                  Fill="#FFFFFF" Width="14" Height="14" Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                        <Button Style="{StaticResource AppleButton}" Click="NextButton_Click"
+                                                Width="32" Height="32">
+                                            <Path Data="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"
+                                                  Fill="#FFFFFF" Width="15" Height="15" Stretch="Uniform"/>
+                                        </Button>
+                                    </StackPanel>
                                 </Grid>
 
                                 <!-- Progress bar -->
-                                <Grid Grid.Row="1" Margin="0,0,0,12">
+                                <Grid Grid.Row="1">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
@@ -543,7 +582,7 @@
                                                      Height="4" VerticalAlignment="Center" IsHitTestVisible="False"
                                                      Minimum="0" Maximum="100" Value="0"/>
                                     </Grid>
-                                    <Grid Grid.Row="1" Margin="0,5,0,0">
+                                    <Grid Grid.Row="1" Margin="0,6,0,0">
                                         <TextBlock x:Name="CurrentTimeText" Text="0:00"
                                                    Foreground="#8E8E93" FontSize="10" FontWeight="SemiBold"
                                                    HorizontalAlignment="Left"/>
@@ -553,26 +592,6 @@
                                     </Grid>
                                 </Grid>
 
-                                <!-- Controls -->
-                                <StackPanel Grid.Row="2" Orientation="Horizontal"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <Button Style="{StaticResource AppleButton}" Click="PrevButton_Click"
-                                            Width="36" Height="36" Margin="0,0,18,0">
-                                        <Path Data="M6 6h2v12H6zm3.5 6l8.5 6V6z"
-                                              Fill="#FFFFFF" Width="16" Height="16" Stretch="Uniform"/>
-                                    </Button>
-                                    <Button Style="{StaticResource PlayCircleButton}" Click="PlayPauseButton_Click"
-                                            Width="42" Height="42" Margin="0,0,18,0" Cursor="Hand">
-                                        <Path x:Name="PlayPauseIcon" Data="M6 19h4V5H6v14zm8-14v14h4V5h-4z"
-                                              Fill="#FFFFFF" Width="15" Height="15" Stretch="Uniform"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </Button>
-                                    <Button Style="{StaticResource AppleButton}" Click="NextButton_Click"
-                                            Width="36" Height="36">
-                                        <Path Data="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"
-                                              Fill="#FFFFFF" Width="16" Height="16" Stretch="Uniform"/>
-                                    </Button>
-                                </StackPanel>
                             </Grid>
 
                             <Rectangle x:Name="LyricsDivider" Grid.Column="1"
@@ -591,17 +610,6 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- 클립보드 히스토리 토글 (미디어 확장 우상단) -->
-                            <Button x:Name="ClipboardToggleButton" Grid.ColumnSpan="3"
-                                    Style="{StaticResource GhostIconButton}" Width="22" Height="22"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top"
-                                    Margin="0,-6,-4,0"
-                                    Click="ClipboardToggleButton_Click" ToolTip="클립보드 기록">
-                                <Path Data="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
-                                      Stroke="#A8A8AD" StrokeThickness="2.2"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                      Width="11" Height="11" Stretch="Uniform"/>
-                            </Button>
                         </Grid>
 
                     </Grid>

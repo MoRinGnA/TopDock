@@ -42,7 +42,9 @@ namespace TopDock
                     if (!_isVolumeAdjusting)
                     {
                         ExpandedTitleText.Text = displayTitle;
-                        ExpandedArtistText.Text = displayArtist;
+                        // 출처를 모를 때 채워 넣던 "YouTube"는 제목 아래 의미 없는 줄 하나를 더 만들 뿐이라
+                        // 비워 둔다 (같은 값이면 아티스트 줄이 통째로 사라져 머리 부분이 깔끔해진다).
+                        ExpandedArtistText.Text = displayArtist == "YouTube" ? string.Empty : displayArtist;
                     }
 
                     // 뷰와 폭은 제목만으로 정해진다 — 가사를 기다리지 않는다. 예전에는 여기서
@@ -274,7 +276,7 @@ namespace TopDock
             double fraction = Math.Clamp(e.GetPosition(el).X / width, 0, 1);
             var target = TimeSpan.FromSeconds(fraction * _seekDuration.TotalSeconds);
             ExpandedProgressBar.Value = fraction * 100;
-            CurrentTimeText.Text = target.ToString(@"m\:ss");
+            CurrentTimeText.Text = FormatClock(target);
             return target;
         }
 
@@ -286,6 +288,13 @@ namespace TopDock
                 : $"Seek ignored (session unsupported): {target:m\\:ss}");
         }
 
+        /// <summary>
+        /// 재생 시간 표기. 예전엔 m\:ss 고정이라 한 시간을 넘는 강의 영상(2:16:33)이 "16:33"으로 보였고,
+        /// 현재 위치("55:11")보다 작아 보여 시간 표시가 뒤집힌 것처럼 읽혔다.
+        /// </summary>
+        private static string FormatClock(TimeSpan t)
+            => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : t.ToString(@"m\:ss");
+
         private void UpdateTimelineDisplay(TimeSpan currentPos, TimeSpan duration)
         {
             if (duration.TotalSeconds > 0)
@@ -294,8 +303,8 @@ namespace TopDock
                 progress = Math.Clamp(progress, 0, 100);
                 ExpandedProgressBar.Value = progress;
 
-                CurrentTimeText.Text = currentPos.ToString(@"m\:ss");
-                TotalTimeText.Text = duration.ToString(@"m\:ss");
+                CurrentTimeText.Text = FormatClock(currentPos);
+                TotalTimeText.Text = FormatClock(duration);
             }
             else
             {
@@ -386,7 +395,7 @@ namespace TopDock
 
         /// <summary>
         /// 확장 뷰에서 가사 자리를 내줄지 정한다. 자리를 비울 때는 내용을 가운데로 모은다 —
-        /// 그러지 않으면 276폭에 왼쪽으로 몰린 모습이 된다.
+        /// 그러지 않으면 422폭에 왼쪽으로 몰린 모습이 된다.
         /// </summary>
         private void ApplyLyricsLayout(bool reserve)
         {
