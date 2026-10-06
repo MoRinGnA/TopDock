@@ -64,12 +64,10 @@ namespace TopDock
             // AI 비서 대화 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
             if (_currentViewMode == ViewMode.Assistant)
             {
-                _isVolumeAdjusting = false;
                 HideVolumeBarExpanded();
                 return;
             }
             _isExpanded = false;
-            _isVolumeAdjusting = false;
             HideVolumeBarExpanded();
 
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
@@ -381,7 +379,6 @@ namespace TopDock
                 return;
             }
 
-            _isVolumeAdjusting = true;
             string volStr = isMuted ? "Mute" : $"{volumeVal}%";
 
             VolumeProgressBar.Value = volumeVal;
@@ -448,7 +445,6 @@ namespace TopDock
                 _volumeHudTimer.Tick += (s, args) =>
                 {
                     _volumeHudTimer.Stop();
-                    _isVolumeAdjusting = false;
 
                     if (_isExpanded)
                     {

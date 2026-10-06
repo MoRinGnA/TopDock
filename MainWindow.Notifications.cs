@@ -9,31 +9,69 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
-        /// <summary>미디어 컴팩트 뷰 오른쪽에서 배터리 점이 앉을 자리(점 12 + 여백 8).</summary>
+        /// <summary>미디어 컴팩트 뷰 상태 아이콘 묶음에 예약하는 배터리 점 슬롯(점 12 + 간격 8).</summary>
         private const double BatteryDotSlotWidth = 20;
+
+        private bool _batteryStatusInitialized;
+        private DispatcherTimer? _chargingBeamTimer;
+        private bool _chargingBeamActive;
 
         /// <summary>지금 숨쉬고 있는 배터리 점. 뷰가 바뀌면 이 점만 멈추면 된다.</summary>
         private FrameworkElement? _pulsingDot;
 
         /// <summary>배터리는 퍼센트가 아니라 3분류로 다룬다(일반/충전/부족).
-        /// 노치 테두리를 통째로 칠하면 노치에서 가장 밝은 요소가 되어 beam과 색이 섞이므로,
-        /// 안쪽 우측의 작은 점으로만 조용히 알리고 펼치면 퍼센트를 텍스트로 보여준다.</summary>
+        /// 일반 상태는 숨기고, 접힌 화면에는 작은 상태 점을, 펼친 화면에는 퍼센트를 보여준다.</summary>
         private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
         {
             Dispatcher.Invoke(() =>
             {
                 _batteryPercent = e.BatteryPercent;
 
+                bool wasInitialized = _batteryStatusInitialized;
+                bool wasCharging = _batteryLevel == BatteryLevel.Charging;
                 var level = e.IsCharging
                     ? BatteryLevel.Charging
                     : e.BatteryPercent <= 0.20f ? BatteryLevel.Low : BatteryLevel.Normal;
 
-                // 상태가 실제로 바뀐 순간에만 한 번 밝게 깜빡인다(꽂는 순간의 체감).
-                bool flash = level != _batteryLevel && level != BatteryLevel.Normal;
+                // 앱 시작 시 이미 연결된 충전기를 새 연결로 오인하지 않고, 이후 꽂는 순간만 알린다.
+                _batteryStatusInitialized = true;
+                bool flash = wasInitialized && level != _batteryLevel && level != BatteryLevel.Normal;
                 _batteryLevel = level;
+
+                if (wasInitialized && !wasCharging && e.IsCharging)
+                {
+                    ShowChargingFeedback();
+                }
 
                 ApplyBatteryIndicator(flash);
             });
+        }
+
+        /// <summary>충전 연결 순간에만 알림과 초록 빔을 잠시 보여주고 평소 상태로 되돌린다.</summary>
+        private void ShowChargingFeedback()
+        {
+            ShowNotchNotice(IconBolt, NoticeCharging, string.Empty, "충전 중", null,
+                TimeSpan.FromSeconds(2.4), NoticeSource.Charging, flashEdge: false);
+
+            // 현재 빔의 모양·속도·밝기는 그대로 두고 액센트 색만 잠시 초록색으로 바꾼다.
+            _chargingBeamActive = true;
+            UpdateBeamState();
+
+            if (_chargingBeamTimer == null)
+            {
+                _chargingBeamTimer = new DispatcherTimer();
+                _chargingBeamTimer.Tick += ChargingBeamTimer_Tick;
+            }
+            _chargingBeamTimer.Stop();
+            _chargingBeamTimer.Interval = TimeSpan.FromSeconds(2.4);
+            _chargingBeamTimer.Start();
+        }
+
+        private void ChargingBeamTimer_Tick(object? sender, EventArgs e)
+        {
+            _chargingBeamTimer?.Stop();
+            _chargingBeamActive = false;
+            UpdateBeamState();
         }
 
         /// <summary>현재 뷰와 배터리 상태에 맞춰 점·퍼센트를 다시 그린다. 뷰 전환에서도 호출된다.</summary>
@@ -163,9 +201,10 @@ namespace TopDock
         private static readonly Color NoticeTool = Color.FromRgb(0xFF, 0x9F, 0x0A);   // 도구 실행 — 앰버
         private static readonly Color NoticeThink = Color.FromRgb(0xBF, 0x5A, 0xF2);  // AI 사고·응답 중 — 퍼플
         private static readonly Color NoticeDone = Color.FromRgb(0x30, 0xD1, 0x58);   // AI 완료 — 그린
+        private static readonly Color NoticeCharging = Color.FromRgb(0x34, 0xC7, 0x59); // 충전 연결 — 그린
 
         /// <summary>지금 떠 있는 알림의 출처 — AI·도구 알림이 서로를 잘못 걷지 않게 구분한다.</summary>
-        private enum NoticeSource { None, Windows, Tool, Assistant }
+        private enum NoticeSource { None, Windows, Tool, Assistant, Charging }
         private NoticeSource _activeNotice = NoticeSource.None;
 
         /// <summary>알림이 하나라도 떠 있는가 — 타이머 없이 계속 떠 있는(sticky) 알림도 포함한다.</summary>
@@ -176,6 +215,7 @@ namespace TopDock
         private static readonly Geometry IconGear = Freeze(Geometry.Parse("M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"));
         private static readonly Geometry IconSparkle = Freeze(Geometry.Parse("M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2z"));
         private static readonly Geometry IconCheck = Freeze(Geometry.Parse("M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"));
+        private static readonly Geometry IconBolt = Freeze(Geometry.Parse("M7 2v11h3v9l7-12h-4l3-8z"));
 
         private static Geometry Freeze(Geometry g) { g.Freeze(); return g; }
 
@@ -184,7 +224,7 @@ namespace TopDock
         /// 알림이 뜨는 동안 노치는 잠깐 넓은 알림 바로 바뀌었다가 끝나면 원래 화면으로 돌아간다.
         /// </summary>
         private void ShowNotchNotice(Geometry icon, Color accent, string label, string title,
-            string? body, TimeSpan? duration, NoticeSource source)
+            string? body, TimeSpan? duration, NoticeSource source, bool flashEdge = true)
         {
             _activeNotice = source;
             Log.Info($"Notch notice: {source} · {label} · {title}"
@@ -213,7 +253,7 @@ namespace TopDock
             SwitchViewMode(_isExpanded ? ViewMode.NotificationExpanded : ViewMode.NotificationCompact);
 
             // 살아있는 가장자리 — 무슨 일이 일어났다는 빛의 신호
-            FlashNotchEdge();
+            if (flashEdge) FlashNotchEdge();
 
             _notificationTimer ??= NewNotificationTimer();
             _notificationTimer.Stop();

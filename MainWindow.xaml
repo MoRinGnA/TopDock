@@ -457,6 +457,13 @@
                                        Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                             <StackPanel x:Name="EqualizerPanel" Grid.Column="2" Orientation="Horizontal"
                                         VerticalAlignment="Center" Margin="10,0,0,0">
+                                <!-- 배터리 상태 점과 오디오 비주얼라이제이션의 좌우 배치를 교환 -->
+                                <Grid x:Name="MediaBatteryDot" Width="12" Height="12"
+                                      Margin="0,0,8,0" VerticalAlignment="Center"
+                                      Visibility="Collapsed" IsHitTestVisible="False">
+                                    <Ellipse x:Name="MediaBatteryDotGlow" Width="12" Height="12" Opacity="0.3" Fill="#34C759"/>
+                                    <Ellipse x:Name="MediaBatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
+                                </Grid>
                                 <!-- 색은 코드에서 현재 곡의 색(테두리 빛과 동일)으로 바꿔 끼운다 -->
                                 <Border x:Name="EqBar1" Width="2.5" Height="3" CornerRadius="1.25"
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
@@ -464,14 +471,6 @@
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
                                 <Border x:Name="EqBar3" Width="2.5" Height="3" CornerRadius="1.25"
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
-                                <!-- 충전/부족 표시 — 미디어 재생 중에도 배터리 상태를 조용히 알린다.
-                                     자리는 CalculateCompactWidth가 항상 확보해 둔다. -->
-                                <Grid x:Name="MediaBatteryDot" Width="12" Height="12"
-                                      Margin="8,0,0,0" VerticalAlignment="Center"
-                                      Visibility="Collapsed" IsHitTestVisible="False">
-                                    <Ellipse x:Name="MediaBatteryDotGlow" Width="12" Height="12" Opacity="0.3" Fill="#34C759"/>
-                                    <Ellipse x:Name="MediaBatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
-                                </Grid>
                             </StackPanel>
                         </Grid>
 
@@ -534,17 +533,8 @@
                                                    Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
 
-                                    <!-- 컨트롤 묶음 — 클립보드 토글까지 같은 줄에 모아 세로를 줄인다 -->
+                                    <!-- 재생 조작만 남겨 헤더를 가볍게 정리 -->
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button x:Name="ClipboardToggleButton"
-                                                Style="{StaticResource GhostIconButton}" Width="22" Height="22"
-                                                Margin="0,0,10,0"
-                                                Click="ClipboardToggleButton_Click" ToolTip="클립보드 기록">
-                                            <Path Data="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
-                                                  Stroke="#A8A8AD" StrokeThickness="2.2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                                  Width="11" Height="11" Stretch="Uniform"/>
-                                        </Button>
                                         <Button Style="{StaticResource AppleButton}" Click="PrevButton_Click"
                                                 Width="32" Height="32" Margin="0,0,14,0">
                                             <Path Data="M6 6h2v12H6zm3.5 6l8.5 6V6z"
@@ -596,6 +586,17 @@
 
                             <Rectangle x:Name="LyricsDivider" Grid.Column="1"
                                        Fill="#12FFFFFF" Width="1" Margin="16,10,18,10" Visibility="Collapsed"/>
+
+                            <!-- 가사 조회 중에도 예약된 영역을 비워두지 않고 조용한 상태 안내를 보여준다. -->
+                            <StackPanel x:Name="LyricsLoadingPanel" Grid.Column="2" VerticalAlignment="Center"
+                                        Margin="4,0,18,0" Visibility="Collapsed">
+                                <TextBlock Text="LYRICS" Foreground="#C69A6B" FontSize="9"
+                                           FontWeight="Bold" Margin="0,0,0,7"/>
+                                <TextBlock Text="가사를 찾고 있어요" Foreground="#E8E5E1" FontSize="14"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="잠시만 기다려 주세요" Foreground="#77777C" FontSize="11"
+                                           Margin="0,4,0,0"/>
+                            </StackPanel>
 
                             <Grid x:Name="LyricsContainer" Grid.Column="2" VerticalAlignment="Center" Visibility="Collapsed">
                                 <StackPanel x:Name="LyricsPanel">

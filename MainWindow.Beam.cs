@@ -67,6 +67,12 @@ namespace TopDock
                 NotchBeam.Speed = 0.09;
             }
 
+            if (_chargingBeamActive)
+            {
+                // 충전 피드백 동안에만 초록 단색. Form·Speed·Strength와 평소 상태 로직은 그대로 둔다.
+                NotchBeam.Tint = Controls.BeamTint.Mono;
+                NotchBeam.AccentColor = Color.FromRgb(0x34, 0xC7, 0x59);
+            }
             NotchBeam.Strength = strength;
 
             if (log != _lastBeamState)

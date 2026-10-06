@@ -16,7 +16,7 @@ namespace TopDock
         /// <summary>도구 이름 → 어울리는 오브 디자인과 상태 문구.</summary>
         private static (Controls.OrbKind Kind, string Status) OrbForTool(string toolName) => toolName switch
         {
-            "play_youtube" => (Controls.OrbKind.Searching, "검색 중..."),     // 점 구름을 훑는 스캔
+            "play_youtube" or "get_weather" => (Controls.OrbKind.Searching, "검색 중..."), // 외부 정보 조회
             "open_url" => (Controls.OrbKind.Connecting, "연결 중..."),        // 노드 네트워크
             "open_app" => (Controls.OrbKind.Shaping, "준비 중..."),           // 도형이 바뀌는 중
             "set_volume" => (Controls.OrbKind.Listening, "볼륨 조절 중..."),  // 구면을 타는 파동
@@ -147,7 +147,19 @@ namespace TopDock
                 {
                     AssistantLatestResponseText.Text = "(빈 응답)";
                 }
-                ShowDoneNotice(answer);
+
+                bool keepAnswerOpen = _assistant.LastTurnRequestedInformation && !_assistant.LastTurnPerformedAction;
+                if (keepAnswerOpen)
+                {
+                    // 정보 답변은 사용자가 바로 읽을 수 있도록 패널을 다시 펼쳐 둔다.
+                    if (_currentViewMode != ViewMode.Assistant) OpenAssistant();
+                    AssistantScroll.ScrollToEnd();
+                }
+                else
+                {
+                    // 실행 지시는 결과를 간단히 알리고 접힌 상태를 유지한다.
+                    ShowDoneNotice(answer);
+                }
             }
             catch (OperationCanceledException)
             {

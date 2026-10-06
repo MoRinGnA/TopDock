@@ -45,6 +45,9 @@ namespace TopDock
         private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
         private const int WM_CLIPBOARDUPDATE = 0x031D;
+        private const int WM_POWERBROADCAST = 0x0218;
+        private const int PBT_APMPOWERSTATUSCHANGE = 0x000A;
+        private const int PBT_POWERSETTINGCHANGE = 0x8013;
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -154,7 +157,6 @@ namespace TopDock
         private bool _orbCentral;     // 중앙(작업 중) 오브가 떠 있는가
         private string _lastBeamState = "";
         private bool _isExpanded = false;
-        private bool _isVolumeAdjusting = false;
 
         // 가사 싱크 — 뮤직비디오 앞 여백(인트로)만큼 가사를 늦춘다.
         private TimeSpan _lyricOffset = TimeSpan.Zero;
@@ -322,6 +324,11 @@ namespace TopDock
             if (msg == WM_CLIPBOARDUPDATE)
             {
                 HandleClipboardUpdate();
+            }
+            if (msg == WM_POWERBROADCAST &&
+                (wParam.ToInt32() == PBT_APMPOWERSTATUSCHANGE || wParam.ToInt32() == PBT_POWERSETTINGCHANGE))
+            {
+                _batteryService.RefreshNow();
             }
             if (msg == WM_NCHITTEST)
             {

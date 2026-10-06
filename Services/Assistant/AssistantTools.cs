@@ -21,6 +21,7 @@ namespace TopDock.Services
         private readonly MediaService _media;
         private readonly AudioService _audio;
         private readonly YouTubeSearchService _youTube = new();
+        private readonly WeatherService _weather = new();
 
         public AssistantTools(MediaService media, AudioService audio)
         {
@@ -144,6 +145,17 @@ namespace TopDock.Services
                     if (url.Length == 0) return Done("url 인자가 비었다");
                     string browser = GetString(args, "browser");
                     return Done(OpenIn(url, browser));
+                }),
+
+            new("get_weather", "사용자가 날씨를 물었을 때만 인터넷에서 현재 날씨와 오늘·내일 예보를 새로 조회한다",
+                NoArgs(), Array.Empty<string>(),
+                async (_, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    string weather = await _weather.GetSummaryAsync().ConfigureAwait(false);
+                    return string.IsNullOrWhiteSpace(weather)
+                        ? "날씨 정보를 가져오지 못했다. 위치 또는 날씨 서비스에 연결할 수 없다."
+                        : weather;
                 }),
 
             new("play_youtube", "유튜브에서 검색해 첫 영상(검색 실패 시 검색 결과 페이지)을 연다",

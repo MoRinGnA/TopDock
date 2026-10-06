@@ -21,11 +21,14 @@ namespace TopDock.Controls
         private readonly DispatcherTimer _talkTimer;
         private readonly Random _rand = new();
         private Storyboard? _talkStoryboard;
+        private Storyboard? _breathStoryboard;
 
         public AiFace()
         {
             InitializeComponent();
             IsVisibleChanged += (_, _) => SyncTimers();
+            Loaded += (_, _) => SyncTimers();
+            Unloaded += (_, _) => StopAnimations();
 
             _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(3400) };
             _blinkTimer.Tick += (_, _) => _ = BlinkAsync();
@@ -39,13 +42,19 @@ namespace TopDock.Controls
 
         public void SetState(FaceState state)
         {
-            if (_state == state) return;
+            if (_state == state)
+            {
+                SyncTimers();
+                return;
+            }
             _state = state;
             ApplyState();
         }
 
         private void ApplyState()
         {
+            StopBreathing();
+
             double targetEyeH = _state switch
             {
                 FaceState.Alert => 20,
@@ -100,11 +109,13 @@ namespace TopDock.Controls
             {
                 if (!_blinkTimer.IsEnabled) _blinkTimer.Start();
                 if (!_gazeTimer.IsEnabled && _state == FaceState.Idle) _gazeTimer.Start();
+                if (_state == FaceState.Idle) StartBreathing();
             }
             else
             {
                 _blinkTimer.Stop();
                 _gazeTimer.Stop();
+                StopBreathing();
             }
 
             if (_state == FaceState.Talking)
@@ -160,6 +171,59 @@ namespace TopDock.Controls
             var ease = new SineEase { EasingMode = EasingMode.EaseOut };
             EyesBounce.BeginAnimation(TranslateTransform.YProperty,
                 new DoubleAnimation(-3.5, dur) { EasingFunction = ease, AutoReverse = true });
+        }
+
+        private void StartBreathing()
+        {
+            if (_state != FaceState.Idle || !IsVisible || _breathStoryboard != null) return;
+
+            // 작은 크기에서도 살아 있는 느낌만 나도록, 눈 너비와 후광을 천천히 함께 호흡시킨다.
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            var leftEye = new DoubleAnimation(1.0, 1.035, TimeSpan.FromSeconds(1.35))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease,
+            };
+            var rightEye = leftEye.Clone();
+            var halo = new DoubleAnimation(0.40, 0.60, TimeSpan.FromSeconds(1.7))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = ease,
+            };
+
+            _breathStoryboard = new Storyboard();
+            Storyboard.SetTarget(leftEye, LeftBlink);
+            Storyboard.SetTargetProperty(leftEye, new PropertyPath(ScaleTransform.ScaleXProperty));
+            Storyboard.SetTarget(rightEye, RightBlink);
+            Storyboard.SetTargetProperty(rightEye, new PropertyPath(ScaleTransform.ScaleXProperty));
+            Storyboard.SetTarget(halo, Halo);
+            Storyboard.SetTargetProperty(halo, new PropertyPath(UIElement.OpacityProperty));
+            _breathStoryboard.Children.Add(leftEye);
+            _breathStoryboard.Children.Add(rightEye);
+            _breathStoryboard.Children.Add(halo);
+            _breathStoryboard.Begin();
+        }
+
+        private void StopBreathing()
+        {
+            _breathStoryboard?.Stop();
+            _breathStoryboard = null;
+            LeftBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            RightBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            LeftBlink.ScaleX = 1;
+            RightBlink.ScaleX = 1;
+            Halo.BeginAnimation(UIElement.OpacityProperty, null);
+            Halo.Opacity = _state == FaceState.Thinking ? 0.85 : 0.5;
+        }
+
+        private void StopAnimations()
+        {
+            _blinkTimer.Stop();
+            _gazeTimer.Stop();
+            _talkTimer.Stop();
+            StopBreathing();
         }
 
         /// <summary>Thinking 상태에서의 미세 흔들림 시작/중지.</summary>

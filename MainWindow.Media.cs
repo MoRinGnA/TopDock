@@ -38,14 +38,13 @@ namespace TopDock
                     string displayTitle = string.IsNullOrEmpty(parsed.Title) ? media.Title : parsed.Title;
                     string displayArtist = string.IsNullOrEmpty(parsed.Artist) ? (string.IsNullOrEmpty(media.Artist) ? "YouTube" : media.Artist) : parsed.Artist;
 
+                    // 접힌 제목과 확장 제목은 같은 미디어 상태를 표시한다. 볼륨 HUD는 별도 뷰이므로
+                    // 볼륨 조절 중에도 한쪽만 갱신하는 예외를 두지 않는다.
                     CompactTitleText.Text = displayTitle;
-                    if (!_isVolumeAdjusting)
-                    {
-                        ExpandedTitleText.Text = displayTitle;
-                        // 출처를 모를 때 채워 넣던 "YouTube"는 제목 아래 의미 없는 줄 하나를 더 만들 뿐이라
-                        // 비워 둔다 (같은 값이면 아티스트 줄이 통째로 사라져 머리 부분이 깔끔해진다).
-                        ExpandedArtistText.Text = displayArtist == "YouTube" ? string.Empty : displayArtist;
-                    }
+                    ExpandedTitleText.Text = displayTitle;
+                    // 출처를 모를 때 채워 넣던 "YouTube"는 제목 아래 의미 없는 줄 하나를 더 만들 뿐이라
+                    // 비워 둔다 (같은 값이면 아티스트 줄이 통째로 사라져 머리 부분이 깔끔해진다).
+                    ExpandedArtistText.Text = displayArtist == "YouTube" ? string.Empty : displayArtist;
 
                     // 뷰와 폭은 제목만으로 정해진다 — 가사를 기다리지 않는다. 예전에는 여기서
                     // await LoadLyricsAsync를 하고 그 뒤에 뷰를 바꿔서, 후보 질의가 전부
@@ -325,6 +324,7 @@ namespace TopDock
             _syncedLyrics.Clear();
             _lyricsPending = true;
             SetLyricsVisibility(false);
+            SetLyricsLoadingVisibility(true);
             RefreshCompactWidth();
 
             // 이 영상의 길이 — 아티스트를 못 믿을 때(YouTube 업로더명) 같은 제목의 다른 곡을 가려내는 근거가 된다
@@ -335,6 +335,7 @@ namespace TopDock
             if (_lastMediaKey != requestKey) return;
 
             _lyricsPending = false;
+            SetLyricsLoadingVisibility(false);
 
             if (result != null && result.Lines.Count > 0)
             {
@@ -364,11 +365,6 @@ namespace TopDock
             RefreshCompactWidth();
         }
 
-        private void ClipboardToggleButton_Click(object sender, RoutedEventArgs e)
-        {
-            ToggleClipboardHistory();
-        }
-
         /// <summary>인트로로 보정할 상한(초). 차이가 이보다 크면 대부분 아웃트로가 긴 것이라 여기서 자른다.</summary>
         private const double MaxIntroSeconds = 12.0;
 
@@ -391,6 +387,14 @@ namespace TopDock
         {
             LyricsDivider.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             LyricsContainer.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void SetLyricsLoadingVisibility(bool visible)
+        {
+            LyricsLoadingPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            LyricsDivider.Visibility = visible || _syncedLyrics.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         /// <summary>
@@ -559,6 +563,7 @@ namespace TopDock
             _lyricsPending = false;
             _lyricOffset = TimeSpan.Zero;
             SetLyricsVisibility(false);
+            SetLyricsLoadingVisibility(false);
 
             ExpandedProgressBar.Value = 0;
             CurrentTimeText.Text = "0:00";

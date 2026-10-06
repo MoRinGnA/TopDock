@@ -6,39 +6,28 @@ using System.Threading.Tasks;
 namespace TopDock.Services
 {
     /// <summary>
-    /// 키 불필요 실시간 날씨. 위치는 IP 기반(ipwho.is), 날씨는 Open-Meteo(둘 다 무료·오픈 API).
-    /// 30분 캐시. 실패해도 비서 기능을 막지 않게 Summary가 빈 문자열이면 주입을 건너뛴다.
+    /// 요청 시에만 수행하는 실시간 날씨 조회. 위치는 IP 기반(ipwho.is), 날씨는 Open-Meteo(둘 다 무료·오픈 API).
+    /// 캐시하지 않아 도구 호출 때마다 새 데이터를 가져온다.
     /// </summary>
     public class WeatherService : IDisposable
     {
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
-        private DateTime _fetchedAtUtc = DateTime.MinValue;
-        private string _summary = string.Empty;
 
-        /// <summary>마지막으로 받은 날씨 요약. 예: "서울 18°C, 흐림". 실패 시 빈 문자열.</summary>
-        public string CurrentSummary => _summary;
-
-        /// <summary>필요 시(30분 경과) 새로 받아 요약을 반환한다.</summary>
-        public async Task<string> GetSummaryAsync(bool forceRefresh = false)
+        /// <summary>호출될 때마다 위치와 현재·오늘·내일 날씨를 인터넷에서 새로 조회한다. 실패 시 빈 문자열.</summary>
+        public async Task<string> GetSummaryAsync()
         {
-            if (!forceRefresh && _summary.Length > 0 &&
-                DateTime.UtcNow - _fetchedAtUtc < TimeSpan.FromMinutes(30))
-            {
-                return _summary;
-            }
-
             try
             {
                 (double lat, double lon, string city) = await ResolveLocationAsync().ConfigureAwait(false);
-                _summary = await FetchWeatherAsync(lat, lon, city).ConfigureAwait(false);
-                _fetchedAtUtc = DateTime.UtcNow;
-                Log.Info($"Weather updated: {_summary}");
+                string summary = await FetchWeatherAsync(lat, lon, city).ConfigureAwait(false);
+                Log.Info($"Weather updated: {summary}");
+                return summary;
             }
             catch (Exception ex)
             {
                 Log.Warn($"Weather fetch failed: {ex.Message}");
+                return string.Empty;
             }
-            return _summary;
         }
 
         private async Task<(double Lat, double Lon, string City)> ResolveLocationAsync()
@@ -59,14 +48,40 @@ namespace TopDock.Services
 
         private async Task<string> FetchWeatherAsync(double lat, double lon, string city)
         {
-            string url = $"https://api.open-meteo.com/v1/forecast?latitude={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)}&longitude={lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}&current=temperature_2m,weather_code";
+            string url = $"https://api.open-meteo.com/v1/forecast?latitude={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)}&longitude={lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto";
             using var resp = await _http.GetAsync(url).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync().ConfigureAwait(false));
-            JsonElement cur = doc.RootElement.GetProperty("current");
-            double temp = cur.GetProperty("temperature_2m").GetDouble();
-            int code = cur.GetProperty("weather_code").GetInt32();
-            return $"{city} {temp:0}°C, {DescribeCode(code)}";
+            JsonElement root = doc.RootElement;
+            JsonElement cur = root.GetProperty("current");
+            double currentTemp = cur.GetProperty("temperature_2m").GetDouble();
+            int currentCode = cur.GetProperty("weather_code").GetInt32();
+            string observedAt = cur.GetProperty("time").GetString() ?? "시각 미상";
+
+            JsonElement daily = root.GetProperty("daily");
+            JsonElement dates = daily.GetProperty("time");
+            JsonElement codes = daily.GetProperty("weather_code");
+            JsonElement highs = daily.GetProperty("temperature_2m_max");
+            JsonElement lows = daily.GetProperty("temperature_2m_min");
+            string today = FormatDailyForecast(dates, codes, highs, lows, 0);
+            string tomorrow = FormatDailyForecast(dates, codes, highs, lows, 1);
+
+            return $"{city} 현지 시각 {observedAt} 현재 {currentTemp:0}°C, {DescribeCode(currentCode)} · 오늘 {today} · 내일 {tomorrow}";
+        }
+
+        private static string FormatDailyForecast(JsonElement dates, JsonElement codes, JsonElement highs, JsonElement lows, int index)
+        {
+            if (dates.GetArrayLength() <= index || codes.GetArrayLength() <= index ||
+                highs.GetArrayLength() <= index || lows.GetArrayLength() <= index)
+            {
+                return "예보 없음";
+            }
+
+            string date = dates[index].GetString() ?? (index == 0 ? "오늘" : "내일");
+            double high = highs[index].GetDouble();
+            double low = lows[index].GetDouble();
+            int code = codes[index].GetInt32();
+            return $"{date} {DescribeCode(code)}, 최저 {low:0}°C / 최고 {high:0}°C";
         }
 
         /// <summary>WMO 표준 날씨 코드 → 한국어.</summary>

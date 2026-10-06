@@ -28,7 +28,8 @@ namespace TopDock.Services
         {
             _timer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(5) // Check every 5 seconds
+                // 전원 변경은 Windows 메시지로 즉시 받고, 예외 상황 복구용으로만 드물게 확인한다.
+                Interval = TimeSpan.FromSeconds(60)
             };
             _timer.Tick += Timer_Tick;
         }
@@ -69,6 +70,12 @@ namespace TopDock.Services
                 _lastChargingStatus = currentCharging;
                 BatteryStatusChanged?.Invoke(this, new BatteryStatusArgs(currentPercent, currentCharging));
             }
+        }
+
+        /// <summary>전원 상태 변경 메시지를 받은 즉시 현재 배터리 상태를 다시 읽는다.</summary>
+        public void RefreshNow()
+        {
+            CheckBatteryStatus();
         }
 
         public void ForceUpdate()
