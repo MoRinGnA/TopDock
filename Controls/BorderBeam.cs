@@ -215,7 +215,8 @@ namespace TopDock.Controls
 
         private static void Arc(List<Point> pts, double cx, double cy, double a0, double a1, double r)
         {
-            const int steps = 8;
+            // 반지름에 맞춰 호를 촘촘히(현 길이 ≈1.6px) — 성긴 현은 굵은 빛에서 각진 마디로 보인다.
+            int steps = Math.Max(8, (int)Math.Ceiling(r * Math.PI / 2 / 1.6));
             for (int i = 1; i <= steps; i++)
             {
                 double a = a0 + (a1 - a0) * i / steps;
@@ -236,7 +237,14 @@ namespace TopDock.Controls
             if (_penCache.TryGetValue(key, out var p)) return p;
             var brush = new SolidColorBrush(Color.FromArgb((byte)(qa << 2), (byte)(qr << 3), (byte)(qg << 3), (byte)(qb << 3)));
             brush.Freeze();
-            var pen = new Pen(brush, thickness);
+            var pen = new Pen(brush, thickness)
+            {
+                // 굵은 스트로크의 정점 이음매(마이터/베벨)가 곡선에서 마디(도트)로 보이던 원인 —
+                // 둥근 조인으로 이어 붙인다. 양 끝은 평평하게 두어 구간끼리 맞붙게 한다.
+                LineJoin = PenLineJoin.Round,
+                StartLineCap = PenLineCap.Flat,
+                EndLineCap = PenLineCap.Flat,
+            };
             pen.Freeze();
             _penCache[key] = pen;
             return pen;
@@ -272,9 +280,14 @@ namespace TopDock.Controls
             // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다
             double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) : 0.0;
 
+            // 크기 보정 — 작은 알약은 둘레가 짧아 같은 비율의 꼬리도 알약을 거의 다 감싼다.
+            // 그래서 작은 노치에선 꼬리를 줄이고, 큰 노치에선 굵기를 낮춰 둔다.
+            double sizeFactor = Math.Clamp(lightScale, 1.0, 3.2);
+
             double headSigma = HeadSigma * formScale * gain;
-            double tailSpan = TailSpan * (large ? 1.12 : 1.0);
-            double cometW = bw * (large ? 3.2 : 2.0) * Math.Min(lightScale, 2.5);
+            double tailSpan = TailSpan * (large ? 1.10 : 1.0) * (0.55 + 0.18 * sizeFactor);
+            double cometW = bw * (large ? 2.4 : 2.0) * (1.0 + (sizeFactor - 1.0) * 0.35);
+            double bloomScale = (large ? 1.6 : 1.0) * (1.0 + (sizeFactor - 1.0) * 0.30);
 
             // 헤드 위상 — OnTick이 적분해 둔 값을 그대로 쓴다. 여기서 _t × Speed로 다시 만들면
             // 노치가 커지는 동안 _perimeter가 바뀌는 만큼 위상이 튀어 빛이 여러 바퀴 휙 돈다.
@@ -312,7 +325,7 @@ namespace TopDock.Controls
                 (int)Math.Clamp(BaseRim * litFade * 255, 0, 255), bw), ringGeo);
 
             // 2) 블룸 — 헤드 주변의 accent 광이 테두리 안팎으로 번진다
-            DrawBloom(dc, accent, head, litFade, breathe, formScale * gain, headSigma, tailSpan);
+            DrawBloom(dc, accent, head, litFade, breathe, bloomScale, headSigma, tailSpan);
 
             // 2.5) 안쪽 물들임 — 헤드 빛이 패널 안으로 퍼진다(큰 표면 전용)
             DrawWash(dc, accent, head, fade, breathe, wash * edgeGain);
