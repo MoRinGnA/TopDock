@@ -444,15 +444,7 @@ namespace TopDock
             ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleYProperty, popIn);
 
             // 가장자리 빛 펄스 — 복사된 것을 "빛으로" 알린다
-            var flash = new DoubleAnimationUsingKeyFrames();
-            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            flash.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)))
-            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 3 } });
-            flash.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(380))));
-            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1100)))
-            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 2 } });
-            Timeline.SetDesiredFrameRate(flash, 60);
-            NotchBeam.BeginAnimation(Controls.BorderBeam.FlashProperty, flash);
+            FlashNotchEdge();
 
             // 재시작 가능한 일회성 타이머 — 연속 복사 시 경쟁 상태 없이 사라지는 시점만 미룬다
             if (_clipboardToastTimer == null)

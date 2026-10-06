@@ -80,6 +80,31 @@ namespace TopDock.Services
                 async (_, _) => await _media.TrySkipPreviousAsync().ConfigureAwait(false)
                     ? "이전 곡으로 돌아갔다" : "제어할 미디어 세션이 없다"),
 
+            new("media_seek", "현재 재생 위치를 앞뒤로 이동한다. offset_seconds 양수=앞으로, 음수=뒤로 (예: 30, -60)",
+                Args(("offset_seconds", AssistantTool.Prop("integer", "이동할 초. 양수=앞으로, 음수=뒤로"))),
+                new[] { "offset_seconds" },
+                async (args, _) =>
+                {
+                    if (!TryGetInt(args, "offset_seconds", out int offset))
+                        return "offset_seconds 인자가 올바르지 않다";
+                    if (!_media.GetExactPosition(out TimeSpan pos, out TimeSpan duration))
+                        return "제어할 미디어 세션이 없다";
+
+                    // 길이를 알면 [0, 길이]로, 모르면 0 아래로만 막는다
+                    TimeSpan target = pos + TimeSpan.FromSeconds(offset);
+                    if (target < TimeSpan.Zero) target = TimeSpan.Zero;
+                    if (duration > TimeSpan.Zero && target > duration) target = duration;
+
+                    bool ok = await _media.TrySeekAsync(target).ConfigureAwait(false);
+                    if (!ok) return "이 미디어는 탐색을 지원하지 않는다";
+
+                    string dir = offset >= 0 ? "앞으로" : "뒤로";
+                    string at = duration > TimeSpan.Zero
+                        ? $"{FormatTime(target)} / {FormatTime(duration)}"
+                        : FormatTime(target);
+                    return $"{Math.Abs(offset)}초 {dir} 이동했다 ({at})";
+                }),
+
             new("set_volume", "시스템 마스터 볼륨을 지정한 값으로 설정한다",
                 Args(("volume", AssistantTool.Prop("integer", "0~100"))), new[] { "volume" },
                 (args, _ct) =>
@@ -254,6 +279,9 @@ namespace TopDock.Services
         // ────────────────────────── 인자 유틸 ──────────────────────────
 
         private static Task<string> Done(string message) => Task.FromResult(message);
+
+        /// <summary>재생 시각 표시용 m:ss.</summary>
+        private static string FormatTime(TimeSpan t) => t.ToString(@"m\:ss");
 
         private static Dictionary<string, object?> NoArgs() => new();
 

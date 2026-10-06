@@ -323,55 +323,105 @@ namespace TopDock.Controls
             dc.Pop(); // clip
         }
 
+        // ── 혜성 그리기: 같은 밝기 구간을 '연속 폴리라인' 하나로 합쳐 긋는다 ──
+        // 세그먼트(≈1.2px)를 하나씩 DrawLine 하면, 굵은 빛이 곡선을 만날 때 인접 조각의
+        // 부채꼴 이음매가 벌어져 점(도트)처럼 보인다. 밝기 버킷별로 구간을 이어 그리면
+        // 곡선에서도 매끈한 한 줄기가 되고, 그리기 횟수도 수천 → 수백으로 줄어든다.
+        private const int AlphaBuckets = 48;
+
+        /// <summary>세그먼트 i의 혜성 알파(fade·breathe 반영)를 버킷으로 — 너무 어두우면 -1.</summary>
+        private int CometBucket(int i, double head, double headSigma, double tailSpan, double gain)
+        {
+            double d = SignedDelta(_ring[i].Ang, head);
+            double a = CometProfile(d, headSigma, tailSpan) * gain;
+            if (a <= 0.004) return -1;
+            return Math.Clamp((int)(a * AlphaBuckets), 0, AlphaBuckets - 1);
+        }
+
+        /// <summary>[start, end) 세그먼트 구간을 하나의 폴리라인으로 긋는다(곡선 이음매 제거).</summary>
+        private void StrokeRingRun(DrawingContext dc, int start, int end, Pen? pen)
+        {
+            if (pen == null || end <= start) return;
+            int n = _ring.Count;
+            var geo = new StreamGeometry();
+            using (StreamGeometryContext ctx = geo.Open())
+            {
+                ctx.BeginFigure(new Point(_ring[start % n].X, _ring[start % n].Y), false, false);
+                for (int i = start + 1; i <= end; i++)
+                {
+                    RingPt p = _ring[i % n];
+                    ctx.LineTo(new Point(p.X, p.Y), true, false);
+                }
+            }
+            geo.Freeze();
+            dc.DrawGeometry(null, pen, geo);
+        }
+
         private void DrawBloom(DrawingContext dc, Color accent, double head, double fade, double breathe,
             double formScale, double headSigma, double tailSpan)
         {
             double[] th = { 11.5, 6.8, 4.0, 2.2 };
             double[] am = { 0.075, 0.15, 0.27, 0.48 };
-            for (int i = 0; i < _ring.Count; i++)
+
+            int n = _ring.Count;
+            if (n < 2) return;
+            double gain = fade * breathe;
+            int runStart = 0;
+            int runBucket = CometBucket(0, head, headSigma, tailSpan, gain);
+            for (int i = 1; i <= n; i++)
             {
-                var p = _ring[i];
-                double d = SignedDelta(p.Ang, head);
-                double a = CometProfile(d, headSigma, tailSpan);
-                if (a < 0.02) continue;
-                var q = _ring[(i + 1) % _ring.Count];
-                var pt1 = new Point(p.X, p.Y);
-                var pt2 = new Point(q.X, q.Y);
-                for (int k = 0; k < th.Length; k++)
+                int bucket = i < n ? CometBucket(i, head, headSigma, tailSpan, gain) : -1;
+                if (bucket == runBucket) continue;
+
+                if (runBucket >= 0)
                 {
-                    byte aa = (byte)Math.Clamp(a * am[k] * fade * breathe * BloomGain * 255, 0, 255);
-                    if (aa < 2) continue;
-                    dc.DrawLine(PenFor(accent, aa, th[k] * formScale), pt1, pt2);
+                    double a = (runBucket + 0.5) / AlphaBuckets;   // fade·breathe 반영된 밝기
+                    for (int k = 0; k < th.Length; k++)
+                    {
+                        byte aa = (byte)Math.Clamp(a * am[k] * BloomGain * 255, 0, 255);
+                        if (aa < 2) continue;
+                        StrokeRingRun(dc, runStart, i, PenFor(accent, aa, th[k] * formScale));
+                    }
                 }
+                runStart = i;
+                runBucket = bucket;
             }
         }
 
         private void DrawComet(DrawingContext dc, Color accent, double head, double fade, double breathe,
             double cometW, double headSigma, double tailSpan)
         {
-            for (int i = 0; i < _ring.Count; i++)
+            int n = _ring.Count;
+            if (n < 2) return;
+            double gain = fade * breathe;
+            int runStart = 0;
+            int runBucket = CometBucket(0, head, headSigma, tailSpan, gain);
+            for (int i = 1; i <= n; i++)
             {
-                var p = _ring[i];
-                double d = SignedDelta(p.Ang, head);
-                double a = CometProfile(d, headSigma, tailSpan);
-                if (a < 0.012) continue;
-                double outA = a * fade * breathe;
-                if (outA <= 0.004) continue;
+                int bucket = i < n ? CometBucket(i, head, headSigma, tailSpan, gain) : -1;
+                if (bucket == runBucket) continue;
 
-                // Album이면 꼬리를 따라 색상이 돈다(다양한 색). Mono는 한 가지 색.
-                Color seg = Tint == BeamTint.Album && d < 0
-                    ? RotateHue(accent, -AlbumHueSpread * Math.Min(1.0, -d / tailSpan))
-                    : accent;
+                if (runBucket >= 0)
+                {
+                    // 구간 중앙 세그먼트를 대표색으로 (Album이면 꼬리를 따라 색상이 돈다)
+                    int mid = runStart + (i - runStart) / 2;
+                    double d = SignedDelta(_ring[mid % n].Ang, head);
+                    Color seg = Tint == BeamTint.Album && d < 0
+                        ? RotateHue(accent, -AlbumHueSpread * Math.Min(1.0, -d / tailSpan))
+                        : accent;
 
-                // 헤드 코어는 흰색에 가깝게(열감), 꼬리로 갈수록 색
-                double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma)) * 1.0;
-                byte r = MixChannel(seg.R, 255, hot);
-                byte g = MixChannel(seg.G, 255, hot);
-                byte b = MixChannel(seg.B, 255, hot);
+                    // 헤드 코어는 흰색에 가깝게(열감), 꼬리로 갈수록 색
+                    double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma));
+                    var c = Color.FromRgb(
+                        MixChannel(seg.R, 255, hot),
+                        MixChannel(seg.G, 255, hot),
+                        MixChannel(seg.B, 255, hot));
 
-                var q = _ring[(i + 1) % _ring.Count];
-                dc.DrawLine(PenFor(Color.FromRgb(r, g, b), (int)(outA * 255), cometW),
-                    new Point(p.X, p.Y), new Point(q.X, q.Y));
+                    double a = (runBucket + 0.5) / AlphaBuckets;   // fade·breathe 반영된 밝기
+                    StrokeRingRun(dc, runStart, i, PenFor(c, (int)(a * 255), cometW));
+                }
+                runStart = i;
+                runBucket = bucket;
             }
         }
 

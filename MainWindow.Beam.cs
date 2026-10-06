@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using TopDock.Models;
 using TopDock.Services;
@@ -73,6 +74,23 @@ namespace TopDock
                 _lastBeamState = log;
                 Log.Info($"Beam state: {log}");
             }
+        }
+
+        /// <summary>
+        /// 노치 테두리를 한 번 밝게 — "무슨 일이 일어났다"는 빛의 신호.
+        /// 복사 피드백과 각종 노치 알림이 같은 리듬을 공유한다(급히 밝아졌다가 천천히 식는다).
+        /// </summary>
+        private void FlashNotchEdge(double peak = 1.0, double totalMs = 1100)
+        {
+            var flash = new DoubleAnimationUsingKeyFrames();
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(peak, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)))
+            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 3 } });
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(peak, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(380))));
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(totalMs)))
+            { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 2 } });
+            Timeline.SetDesiredFrameRate(flash, 60);
+            NotchBeam.BeginAnimation(Controls.BorderBeam.FlashProperty, flash);
         }
 
         /// <summary>

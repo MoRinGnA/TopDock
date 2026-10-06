@@ -262,17 +262,21 @@
                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Grid>
 
-                        <!-- Notification Compact -->
+                        <!-- Notification Compact — 라벨은 출처별 아이콘+색으로, 제목은 문장으로 -->
                         <Grid x:Name="NotificationCompactView" Opacity="0" IsHitTestVisible="False"
                               Margin="14,0,14,0" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="NotifCompactAppText" Grid.Column="0" Text="App"
+                            <Path x:Name="NotifCompactIcon" Grid.Column="0"
+                                  Width="11" Height="11" Stretch="Uniform" Fill="#0A84FF"
+                                  VerticalAlignment="Center" Margin="0,-2,7,0"/>
+                            <TextBlock x:Name="NotifCompactAppText" Grid.Column="1" Text="App"
                                        Foreground="#0A84FF" FontSize="13.5" FontWeight="Bold"
                                        VerticalAlignment="Center" Margin="0,-2,10,0"/>
-                            <TextBlock x:Name="NotifCompactTitleText" Grid.Column="1" Text="Message"
+                            <TextBlock x:Name="NotifCompactTitleText" Grid.Column="2" Text="Message"
                                        Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold"
                                        VerticalAlignment="Center" Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                         </Grid>
@@ -282,6 +286,16 @@
                              접혀 오브가 무대 정중앙에 선다 — 예전의 검은 공허가 나오지 않는다. -->
                         <Grid x:Name="AssistantView" Opacity="0" IsHitTestVisible="False"
                               Margin="18,12,18,12">
+                            <!-- 비네트 — 중앙은 아주 옅게 밝고 가장자리는 살짝 가라앉아 공간감을 준다.
+                                 클립이 사각이라 노치 밖으로 새지 않는다. -->
+                            <Grid.Background>
+                                <RadialGradientBrush GradientOrigin="0.5,0.38" Center="0.5,0.38"
+                                                     RadiusX="0.72" RadiusY="0.86">
+                                    <GradientStop Color="#0FFFFFFF" Offset="0"/>
+                                    <GradientStop Color="#00000000" Offset="0.45"/>
+                                    <GradientStop Color="#38000000" Offset="1"/>
+                                </RadialGradientBrush>
+                            </Grid.Background>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>     <!-- 무대: 오브 + 상태 -->
                                 <RowDefinition Height="Auto"/>  <!-- 응답 -->
@@ -307,7 +321,7 @@
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Grid>
                                 <TextBlock x:Name="AssistantStatusText" Text=""
-                                           HorizontalAlignment="Center" Margin="0,14,0,0" MaxWidth="340"
+                                           HorizontalAlignment="Center" Margin="0,12,0,0" MaxWidth="340"
                                            FontSize="12.5" TextTrimming="CharacterEllipsis">
                                     <TextBlock.Foreground>
                                         <!-- 원작 디테일: 흐린 잉크 위로 밝은 빛이 스치는 광택 스윕 -->
@@ -324,7 +338,7 @@
                             <!-- 응답 — 오브 아래에 떠오른다. 내용이 없으면 저절로 0 높이 -->
                             <ScrollViewer Grid.Row="1" x:Name="AssistantScroll" MaxHeight="104"
                                           VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
-                                          Margin="2,12,2,0">
+                                          Margin="22,8,22,0">
                                 <TextBlock x:Name="AssistantLatestResponseText" Text=""
                                            Foreground="#E8FFFFFF" FontSize="13" FontWeight="Medium"
                                            TextWrapping="Wrap"/>
@@ -396,8 +410,13 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <TextBlock x:Name="NotifExpandedAppText" Grid.Row="0" Text="App Name"
-                                       Foreground="#0A84FF" FontSize="12" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                                <Path x:Name="NotifExpandedIcon" Width="12" Height="12" Stretch="Uniform"
+                                      Fill="#0A84FF" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBlock x:Name="NotifExpandedAppText" Text="App Name"
+                                           Foreground="#0A84FF" FontSize="12" FontWeight="Bold"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
                             <TextBlock x:Name="NotifExpandedTitleText" Grid.Row="1" Text="Notification Title"
                                        Foreground="#FFFFFF" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" MaxHeight="44" Margin="0,0,0,4"/>
                             <TextBlock x:Name="NotifExpandedBodyText" Grid.Row="2" Text="Body text here..."
@@ -512,10 +531,17 @@
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
-                                    <Grid Grid.Row="0">
+                                    <!-- 진행바 위의 투명한 14px 히트존 — 클릭/드래그로 탐색.
+                                         음수 마진으로 실제 차지 높이는 4px 그대로 유지한다. -->
+                                    <Grid Grid.Row="0" Height="14" Margin="0,-5,0,-5"
+                                          Background="Transparent" Cursor="Hand"
+                                          MouseLeftButtonDown="SeekBar_MouseLeftButtonDown"
+                                          MouseMove="SeekBar_MouseMove"
+                                          MouseLeftButtonUp="SeekBar_MouseLeftButtonUp">
                                         <ProgressBar x:Name="ExpandedProgressBar"
                                                      Style="{StaticResource AppleProgressBar}"
-                                                     Height="4" Minimum="0" Maximum="100" Value="0"/>
+                                                     Height="4" VerticalAlignment="Center" IsHitTestVisible="False"
+                                                     Minimum="0" Maximum="100" Value="0"/>
                                     </Grid>
                                     <Grid Grid.Row="1" Margin="0,5,0,0">
                                         <TextBlock x:Name="CurrentTimeText" Text="0:00"

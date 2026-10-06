@@ -190,12 +190,16 @@ namespace TopDock
                 // 도구가 실제로 하는 일을 오브 디자인으로 드러낸다(검색=Globe, 연결=Web, 소리=Wave).
                 var (kind, status) = OrbForTool(name);
                 PostOrb(kind, status);
+                // 비서 화면이 닫혀 있으면 무엇이 실행 중인지 노치 알림으로도 알린다
+                Dispatcher.BeginInvoke(new Action(() => ShowToolNotice(name)));
             };
             _assistantTools.ToolFinished += _ =>
             {
                 // 도구가 끝나면 모델 추론이 이어지므로 '사고 중'으로 — 단, 이미 응답이
                 // 흐르기 시작했다면(델타 수신 뒤) 헤더의 응답 오브로 돌아간다.
                 PostOrb(_assistantStreaming ? Controls.OrbKind.Composing : Controls.OrbKind.Working);
+                // 도구가 끝나면 모델 추론이 이어지므로 알림을 '사고 중'으로 되돌린다 — 상태가 끊기지 않게
+                Dispatcher.BeginInvoke(new Action(ShowThinkingNotice));
             };
             _assistant.Tools = _assistantTools;
 

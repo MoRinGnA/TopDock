@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -209,7 +210,8 @@ namespace TopDock
         {
             if (_mediaService.GetExactPosition(out var currentPos, out var duration))
             {
-                UpdateTimelineDisplay(currentPos, duration);
+                // 드래그 중에는 실제 위치 대신 손끝 미리보기를 유지한다 (타이머가 덮어쓰지 않게)
+                if (!_seeking) UpdateTimelineDisplay(currentPos, duration);
 
                 // 가사 표시는 500ms 미리 룩업하여 실제 음악과 싱크 맞춤.
                 // 오프셋은 뮤직비디오의 앞뒤 여백(인트로)을 보정한 값이다.
@@ -217,6 +219,71 @@ namespace TopDock
                 if (lyricPos < TimeSpan.Zero) lyricPos = TimeSpan.Zero;
                 UpdateLyricsDisplay(lyricPos);
             }
+        }
+
+        // ────────────────────────── 진행바 탐색(seek) ──────────────────────────
+        // 진행바 히트존에서 누르고 끌면 손끝 위치로 미리보기를 그리고, 놓을 때 한 번 실제로 이동한다.
+        // (드래그 내내 TrySeekAsync를 쐬면 SMTC가 요동치므로 이동은 손을 뗄 때만 보낸다)
+
+        private bool _seeking;
+        private TimeSpan _seekDuration;
+
+        private void SeekBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!TryGetSeekDuration(out _seekDuration)) return;
+            _seeking = true;
+            (sender as UIElement)?.CaptureMouse();
+            PreviewSeek(sender, e);
+            e.Handled = true;
+        }
+
+        private void SeekBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_seeking) return;
+            PreviewSeek(sender, e);
+        }
+
+        private void SeekBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_seeking) return;
+            _seeking = false;
+            (sender as UIElement)?.ReleaseMouseCapture();
+            CommitSeek(PreviewSeek(sender, e));
+            e.Handled = true;
+        }
+
+        /// <summary>탐색할 길이를 알 수 있을 때만 시작한다(길이 없는 스트림은 탐색 불가).</summary>
+        private bool TryGetSeekDuration(out TimeSpan duration)
+        {
+            duration = TimeSpan.Zero;
+            if (_mediaService.GetExactPosition(out _, out var total) && total > TimeSpan.Zero)
+            {
+                duration = total;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>손끝 X를 시각으로 환산해 진행바·시간 텍스트를 즉시 갱신한다(낙관적 미리보기).</summary>
+        private TimeSpan PreviewSeek(object sender, MouseEventArgs e)
+        {
+            if (sender is not FrameworkElement el || _seekDuration <= TimeSpan.Zero) return TimeSpan.Zero;
+            double width = el.ActualWidth;
+            if (width <= 0) return TimeSpan.Zero;
+
+            double fraction = Math.Clamp(e.GetPosition(el).X / width, 0, 1);
+            var target = TimeSpan.FromSeconds(fraction * _seekDuration.TotalSeconds);
+            ExpandedProgressBar.Value = fraction * 100;
+            CurrentTimeText.Text = target.ToString(@"m\:ss");
+            return target;
+        }
+
+        private async void CommitSeek(TimeSpan target)
+        {
+            bool ok = await _mediaService.TrySeekAsync(target);
+            Log.Info(ok
+                ? $"Seek: {target:m\\:ss} / {_seekDuration:m\\:ss}"
+                : $"Seek ignored (session unsupported): {target:m\\:ss}");
         }
 
         private void UpdateTimelineDisplay(TimeSpan currentPos, TimeSpan duration)

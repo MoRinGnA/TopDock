@@ -49,8 +49,9 @@ namespace TopDock
 
             if (_currentViewMode == ViewMode.Assistant) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
-            if (_notificationTimer != null && _notificationTimer.IsEnabled)
+            if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
             {
+                // 알림이 떠 있으면 펼쳐서 본문까지 보여준다 (끝나면 원래 화면으로 돌아간다)
                 SwitchViewMode(ViewMode.NotificationExpanded);
                 return;
             }
@@ -72,7 +73,7 @@ namespace TopDock
             HideVolumeBarExpanded();
 
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
-            if (_notificationTimer != null && _notificationTimer.IsEnabled)
+            if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
             {
                 SwitchViewMode(ViewMode.NotificationCompact);
                 return;
@@ -266,7 +267,8 @@ namespace TopDock
                     activeView = _isExpanded ? MediaExpandedView : VolumeHudView;
                     break;
                 case ViewMode.NotificationCompact:
-                    targetWidth = Math.Clamp(MeasureTextWidth(NotifCompactAppText.Text, 13.5, FontWeights.Bold) + MeasureTextWidth(NotifCompactTitleText.Text, 13, FontWeights.SemiBold) + 80, 260, 500);
+                    // 아이콘(11) + 여백(7) + 좌우 패딩(14×2) + 라벨-제목 간격(10)을 더해 문장이 잘리지 않게
+                    targetWidth = Math.Clamp(MeasureTextWidth(NotifCompactAppText.Text, 13.5, FontWeights.Bold) + MeasureTextWidth(NotifCompactTitleText.Text, 13, FontWeights.SemiBold) + 96, 260, 500);
                     targetHeight = 38;
                     targetRadius = 19;
                     activeView = NotificationCompactView;

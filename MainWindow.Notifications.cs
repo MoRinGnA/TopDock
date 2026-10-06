@@ -155,50 +155,165 @@ namespace TopDock
             });
         }
 
+        // ── 노치 알림 ──
+        // Windows 알림 · 도구 실행 · AI 상태가 모두 같은 통로(알림 뷰)로 노치에 뜬다.
+        // 복사 피드백(작은 배지)은 조용한 마이크로 피드백이라 이 통로를 쓰지 않는다.
+
+        private static readonly Color NoticeInfo = Color.FromRgb(0x0A, 0x84, 0xFF);   // Windows 알림 — 기존 파랑
+        private static readonly Color NoticeTool = Color.FromRgb(0xFF, 0x9F, 0x0A);   // 도구 실행 — 앰버
+        private static readonly Color NoticeThink = Color.FromRgb(0xBF, 0x5A, 0xF2);  // AI 사고·응답 중 — 퍼플
+        private static readonly Color NoticeDone = Color.FromRgb(0x30, 0xD1, 0x58);   // AI 완료 — 그린
+
+        /// <summary>지금 떠 있는 알림의 출처 — AI·도구 알림이 서로를 잘못 걷지 않게 구분한다.</summary>
+        private enum NoticeSource { None, Windows, Tool, Assistant }
+        private NoticeSource _activeNotice = NoticeSource.None;
+
+        /// <summary>알림이 하나라도 떠 있는가 — 타이머 없이 계속 떠 있는(sticky) 알림도 포함한다.</summary>
+        private bool NoticeActive => _activeNotice != NoticeSource.None;
+
+        // 출처별 아이콘 — 라벨 글자 앞에 붙어 "무엇에 대한 알림인지"를 한눈에 보여준다.
+        private static readonly Geometry IconBell = Freeze(Geometry.Parse("M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"));
+        private static readonly Geometry IconGear = Freeze(Geometry.Parse("M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"));
+        private static readonly Geometry IconSparkle = Freeze(Geometry.Parse("M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2z"));
+        private static readonly Geometry IconCheck = Freeze(Geometry.Parse("M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"));
+
+        private static Geometry Freeze(Geometry g) { g.Freeze(); return g; }
+
+        /// <summary>
+        /// 노치 알림을 띄운다 — 아이콘·라벨·제목, 펼치면 본문까지.
+        /// 알림이 뜨는 동안 노치는 잠깐 넓은 알림 바로 바뀌었다가 끝나면 원래 화면으로 돌아간다.
+        /// </summary>
+        private void ShowNotchNotice(Geometry icon, Color accent, string label, string title,
+            string? body, TimeSpan? duration, NoticeSource source)
+        {
+            _activeNotice = source;
+            Log.Info($"Notch notice: {source} · {label} · {title}"
+                + (duration is { } shown ? $" ({shown.TotalSeconds:0.#}s)" : " (sticky)"));
+
+            var brush = new SolidColorBrush(accent);
+            brush.Freeze();
+
+            NotifCompactIcon.Data = icon;
+            NotifCompactIcon.Fill = brush;
+            NotifCompactAppText.Text = label;
+            NotifCompactAppText.Foreground = brush;
+            NotifCompactTitleText.Text = title;
+
+            NotifExpandedIcon.Data = icon;
+            NotifExpandedIcon.Fill = brush;
+            NotifExpandedAppText.Text = label;
+            NotifExpandedAppText.Foreground = brush;
+            NotifExpandedTitleText.Text = title;
+            NotifExpandedBodyText.Text = body ?? string.Empty;
+
+            // 알림이 끝나면 돌아갈 화면 — 이미 알림 화면이면 직전 값을 지킨다
+            if (_currentViewMode is not (ViewMode.NotificationCompact or ViewMode.NotificationExpanded))
+                _viewModeBeforeNotification = _currentViewMode;
+
+            SwitchViewMode(_isExpanded ? ViewMode.NotificationExpanded : ViewMode.NotificationCompact);
+
+            // 살아있는 가장자리 — 무슨 일이 일어났다는 빛의 신호
+            FlashNotchEdge();
+
+            _notificationTimer ??= NewNotificationTimer();
+            _notificationTimer.Stop();
+            if (duration is { } span)
+            {
+                _notificationTimer.Interval = span;
+                _notificationTimer.Start();
+            }
+            // duration이 null이면 다음 알림/해제까지 유지된다 — 사고·도구 실행처럼
+            // 끝나는 시점을 모르는 상태는 눈에서 사라졌다 나타나지 않고 계속 떠 있어야 한다
+        }
+
+        /// <summary>도구가 실제로 하는 일을 한 줄로 — 인자까지는 알 수 없으니 동작만 말한다.</summary>
+        private static string ToolNoticeText(string toolName) => toolName switch
+        {
+            "open_app" => "앱 실행 중…",
+            "open_url" => "링크 여는 중…",
+            "play_youtube" => "유튜브 검색 중…",
+            "set_volume" => "볼륨 조절 중…",
+            "media_play_pause" or "media_next" or "media_previous" or "media_seek" => "음악 제어 중…",
+            _ => "작업 실행 중…",
+        };
+
+        /// <summary>AI 사고 알림 — 비서 화면이 열려 있으면 오브가 이미 사고를 보여주므로 노치를 빼앗지 않는다.</summary>
+        private void ShowThinkingNotice()
+        {
+            if (_currentViewMode == ViewMode.Assistant) return;
+            ShowNotchNotice(IconSparkle, NoticeThink, "AI", "생각 중…", null,
+                null, NoticeSource.Assistant);
+        }
+
+        private void ShowToolNotice(string toolName)
+        {
+            // 비서 화면이 열려 있으면 오브·상태가 이미 무슨 일인지 보여준다 — 노치를 빼앗지 않는다
+            if (_currentViewMode == ViewMode.Assistant) return;
+            ShowNotchNotice(IconGear, NoticeTool, "실행", ToolNoticeText(toolName), null,
+                null, NoticeSource.Tool);
+        }
+
+        /// <summary>지시가 끝났다는 짧은 신호 — 답변 본문은 노치를 다시 펼치면 그대로 있다.</summary>
+        private void ShowDoneNotice(string answer)
+        {
+            if (_currentViewMode == ViewMode.Assistant) return;
+            ShowNotchNotice(IconCheck, NoticeDone, "AI", "완료",
+                string.IsNullOrWhiteSpace(answer) ? null : Collapse(answer, 90),
+                TimeSpan.FromSeconds(2.4), NoticeSource.Assistant);
+        }
+
+        /// <summary>AI 상태 알림이 아직 떠 있을 때만 걷는다 — 도구 알림 등 남의 것을 건드리지 않는다.</summary>
+        private void ClearAssistantNotice()
+        {
+            if (_activeNotice == NoticeSource.Assistant) ClearNotchNotice();
+        }
+
+        /// <summary>노치 알림을 걷고 원래 화면으로 돌아간다. 알림이 없으면 아무 일도 하지 않는다.</summary>
+        private void ClearNotchNotice()
+        {
+            bool wasActive = _activeNotice != NoticeSource.None || (_notificationTimer?.IsEnabled ?? false);
+            _activeNotice = NoticeSource.None;
+            _notificationTimer?.Stop();
+
+            if (!wasActive) return;
+            // 사용자가 그새 다른 화면으로 갔으면 알림 화면이 아니다 — 건드리지 않는다
+            if (_currentViewMode is not (ViewMode.NotificationCompact or ViewMode.NotificationExpanded)) return;
+
+            ViewMode back = _viewModeBeforeNotification;
+            _viewModeBeforeNotification = ViewMode.IdleCompact;
+
+            if (back == ViewMode.Assistant)
+            {
+                // 알림이 비서 대화를 잠시 가렸던 경우라면 비서 화면으로 되돌아간다
+                SwitchViewMode(ViewMode.Assistant);
+                return;
+            }
+            SwitchViewMode(_isExpanded
+                ? (HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded)
+                : (HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact));
+        }
+
+        private DispatcherTimer NewNotificationTimer()
+        {
+            var timer = new DispatcherTimer();
+            timer.Tick += (s, args) => ClearNotchNotice();
+            return timer;
+        }
+
         private void NotificationService_NotificationReceived(object? sender, NotificationEventArgs e)
         {
             Dispatcher.Invoke(() =>
             {
                 if (!ConfigService.Current.ShowNotifications) return;
 
-                NotifCompactAppText.Text = e.AppName;
-                NotifCompactTitleText.Text = string.IsNullOrEmpty(e.Title) ? e.Body : e.Title;
-                
-                NotifExpandedAppText.Text = e.AppName;
-                NotifExpandedTitleText.Text = e.Title;
-                NotifExpandedBodyText.Text = e.Body;
-
-                if (_notificationTimer == null || !_notificationTimer.IsEnabled)
-                {
-                    _viewModeBeforeNotification = _currentViewMode;
-                }
-
-                SwitchViewMode(_isExpanded ? ViewMode.NotificationExpanded : ViewMode.NotificationCompact);
-
-                if (_notificationTimer == null)
-                {
-                    _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-                    _notificationTimer.Tick += (s, args) =>
-                    {
-                        _notificationTimer.Stop();
-                        // 알림이 비서 대화를 잠시 가린 경우라면 비서 화면으로 되돌아간다
-                        if (_viewModeBeforeNotification == ViewMode.Assistant)
-                        {
-                            SwitchViewMode(ViewMode.Assistant);
-                            return;
-                        }
-                        if (_isExpanded)
-                        {
-                            SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
-                        }
-                        else
-                        {
-                            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
-                        }
-                    };
-                }
-                _notificationTimer.Stop();
-                _notificationTimer.Start();
+                ShowNotchNotice(
+                    icon: IconBell,
+                    accent: NoticeInfo,
+                    label: e.AppName,
+                    title: string.IsNullOrEmpty(e.Title) ? e.Body : e.Title,
+                    body: e.Body,
+                    duration: TimeSpan.FromSeconds(5),
+                    source: NoticeSource.Windows);
             });
         }
     }

@@ -20,7 +20,7 @@ namespace TopDock
             "open_url" => (Controls.OrbKind.Connecting, "연결 중..."),        // 노드 네트워크
             "open_app" => (Controls.OrbKind.Shaping, "준비 중..."),           // 도형이 바뀌는 중
             "set_volume" => (Controls.OrbKind.Listening, "볼륨 조절 중..."),  // 구면을 타는 파동
-            "media_play_pause" or "media_next" or "media_previous"
+            "media_play_pause" or "media_next" or "media_previous" or "media_seek"
                 => (Controls.OrbKind.Listening, "음악 제어 중..."),
             _ => (Controls.OrbKind.Solving, "처리 중..."),                    // 레이어가 풀리는 큐브
         };
@@ -37,22 +37,21 @@ namespace TopDock
                 Log.Info("Assistant hotkey ignored: disabled in settings");
                 return;
             }
-            if (_assistantBusy)
-            {
-                // 답변 생성 중이면 무시 (의도치 않은 취소 방지)
-                return;
-            }
             if (_currentViewMode == ViewMode.Assistant)
             {
+                // 다시 눌러 접기만 한다 — 요청은 계속 돌고, 취소는 Esc/✕가 맡는다
                 CloseAssistant();
                 return;
             }
 
+            ClearNotchNotice();   // 떠 있던 알림을 걷고 비서 화면으로 (알림 타이머가 화면을 되돌리지 않게)
             _isExpanded = true;
             SwitchViewMode(ViewMode.Assistant);
 
-            // 지시 콘솔: 대기 오브(호흡)가 비서 그 자체 — 인사 말풍선 없음
-            ShowConversationOrb(Controls.OrbKind.Breathing);
+            // 지시가 도는 중이면 진행 상태를, 아니면 대기 오브(호흡)를 보여준다
+            ShowConversationOrb(_assistantBusy
+                ? (_assistantStreaming ? Controls.OrbKind.Composing : Controls.OrbKind.Working)
+                : Controls.OrbKind.Breathing);
 
             // 스위치 애니메이션 이후 포커스 (노치가 Topmost 투명 오버레이라 스스로 활성화 필요)
             ActivateSelfAndFocusInput();
@@ -60,6 +59,7 @@ namespace TopDock
 
         private void CloseAssistant()
         {
+            _isExpanded = false;
             AssistantInputBox.Clear();
             SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
         }
@@ -105,6 +105,11 @@ namespace TopDock
             AssistantLatestResponseText.Text = string.Empty; // 최신 지시 결과만 보여준다
             ShowConversationOrb(Controls.OrbKind.Working);   // 사고 중
 
+            // 지시를 보낸 뒤 알약은 접는다 — 답변은 노치 알림으로 추적하고,
+            // 다시 펼치면 그대로 볼 수 있다. 실패했을 때만 자동으로 다시 펼친다.
+            CloseAssistant();
+            ShowThinkingNotice();
+
             UpdateAssistantContext();
             Log.Info($"Assistant query: {userMessage}");
 
@@ -142,20 +147,24 @@ namespace TopDock
                 {
                     AssistantLatestResponseText.Text = "(빈 응답)";
                 }
+                ShowDoneNotice(answer);
             }
             catch (OperationCanceledException)
             {
                 Log.Info("Assistant request cancelled");
+                ClearAssistantNotice();
             }
             catch (AiException ex)
             {
                 Log.Error("Assistant request failed", ex);
                 AssistantLatestResponseText.Text = "⚠ " + ex.Message;
+                RevealAssistantWithError();
             }
             catch (Exception ex)
             {
                 Log.Error("Assistant unexpected error", ex);
                 AssistantLatestResponseText.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
+                RevealAssistantWithError();
             }
             finally
             {
@@ -163,6 +172,14 @@ namespace TopDock
                 _assistantStreaming = false;
                 ShowConversationOrb(Controls.OrbKind.Breathing); // 대기 복귀
             }
+        }
+
+        /// <summary>실패는 놓치면 안 된다 — 비서 화면을 다시 펼쳐 오류를 보여준다.</summary>
+        private void RevealAssistantWithError()
+        {
+            // 실패는 알림으로 흘리지 않고 화면으로 직접 가져온다 — 다시 시도하기도 쉽다
+            Log.Info("Assistant error: revealing assistant view");
+            if (_currentViewMode != ViewMode.Assistant) OpenAssistant();
         }
 
         private void Assistant_DeltaReceived(string delta)
