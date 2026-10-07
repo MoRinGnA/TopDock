@@ -43,8 +43,9 @@ namespace TopDock.Services
             return provider switch
             {
                 // OpenAI 호환 엔드포인트 (공식: https://ai.google.dev/gemini-api/docs/openai)
-                // 3.8-flash는 무료 티어 한도가 빠듯(429 잦음), 3.5-flash는 한도 여유+도구 호출·한국어 실측 통과.
-                "gemini" => ("https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-3.5-flash"),
+                // 무료 티어 일일 한도는 모델별로 다르다 — 실측: gemini-3.5-flash는 21회째에 429(한도 20),
+                // gemini-3.5-flash-lite는 22회 연속 통과. 도구 호출·한국어 응답은 셋 다 정상.
+                "gemini" => ("https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-3.5-flash-lite"),
                 "upstage" => ("https://api.upstage.ai/v1/solar/", "solar-mini4"),
                 "openrouter" => ("https://openrouter.ai/api/v1/", "google/gemini-2.0-flash-exp:free"),
                 // LLM7 무료 게이트웨이 — 익명 키("unused")로 사용 가능, 기본값
@@ -132,7 +133,45 @@ namespace TopDock.Services
                 model = model["models/".Length..];
             }
             if (string.IsNullOrWhiteSpace(model)) model = defaultModel;
-            Log.Info($"AI 요청: provider={provider}, model={model}");
+
+            // 무료 티어 한도는 공급자·모델별로 따로 잡힌다 — 한 모델이 소진되면 다음 후보 모델로 넘어간다.
+            IReadOnlyList<string> candidates = BuildModelCandidates(provider, model);
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                string candidate = candidates[i];
+                Log.Info($"AI 요청: provider={provider}, model={candidate}");
+                try
+                {
+                    return await SendWithModelAsync(baseUrl, candidate, provider, apiKey, messages, tools, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (AiException ex) when (ex.StatusCode == 429 && i + 1 < candidates.Count)
+                {
+                    Log.Info($"AI 무료 한도 소진({candidate}) → {candidates[i + 1]}로 전환");
+                }
+                catch (AiException ex) when (ex.StatusCode == 429 && i > 0)
+                {
+                    throw new AiException(
+                        BuildAllExhaustedMessage(candidates, ex),
+                        429, ex.RetryDelay, ex.IsDailyQuota, ex.Model);
+                }
+            }
+            throw new AiException("AI 요청에 실패했습니다.");
+        }
+
+        /// <summary>
+        /// 모델 하나로 요청을 보낸다. 곧 풀리는 제한(503 과부하, 분 단위 429)은 같은 모델로 짧게 기다렸다
+        /// 한 번만 재시도하고, 일일 한도처럼 오래 걸리는 제한은 재시도 없이 올려보내 상위에서 모델을 바꾼다.
+        /// </summary>
+        private async Task<AiTurnResult> SendWithModelAsync(
+            string baseUrl,
+            string model,
+            string provider,
+            string apiKey,
+            List<Dictionary<string, object?>> messages,
+            IReadOnlyList<object?>? tools,
+            CancellationToken ct)
+        {
 
             var payload = new Dictionary<string, object?>
             {
@@ -167,9 +206,15 @@ namespace TopDock.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    string errorBody = await SafeReadErrorAsync(response, ct).ConfigureAwait(false);
-                    Log.Error($"AI request failed: {(int)response.StatusCode} {errorBody}");
-                    throw new AiException(TranslateError((int)response.StatusCode, errorBody), (int)response.StatusCode);
+                    AiErrorInfo? info = await TryParseErrorAsync(response, ct).ConfigureAwait(false);
+                    Log.Error($"AI request failed: {(int)response.StatusCode} status={info?.Status} " +
+                              $"quota={info?.QuotaId} retry={info?.RetryDelaySeconds}s detail={info?.Message}");
+                    throw new AiException(
+                        TranslateError((int)response.StatusCode, info, provider, model),
+                        (int)response.StatusCode,
+                        info?.RetryDelaySeconds is int seconds ? TimeSpan.FromSeconds(seconds) : null,
+                        info?.IsDailyQuota ?? false,
+                        model);
                 }
 
                 using Stream stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
@@ -182,11 +227,19 @@ namespace TopDock.Services
                 {
                     return await SendOnceAsync().ConfigureAwait(false);
                 }
-                catch (AiException ex) when (ex.StatusCode is 503 or 429)
+                catch (AiException ex) when (ex.StatusCode == 503)
                 {
-                    // Gemini 계열은 간헐적 과부하(503)/한도(429)가 잦다 — 1.5초 뒤 한 번만 재시도
-                    Log.Info($"AI request got HTTP {ex.StatusCode}, retrying once");
+                    // Gemini 계열은 간헐적 과부하(503)가 잦다 — 1.5초 뒤 한 번만 재시도
+                    Log.Info("AI 서버 과부하(503) → 1.5초 뒤 1회 재시도");
                     await Task.Delay(1500, ct).ConfigureAwait(false);
+                    return await SendOnceAsync().ConfigureAwait(false);
+                }
+                catch (AiException ex) when (ex.StatusCode == 429 && ex.IsRetrySoon)
+                {
+                    // 분당 한도처럼 금방 풀리는 제한만 같은 모델로 한 번 더 시도한다 (일일 한도는 기다려도 소용없다)
+                    TimeSpan wait = ex.RetryDelay ?? TimeSpan.FromSeconds(1.5);
+                    Log.Info($"AI 분당 한도(429) → {wait.TotalSeconds:0.#}초 뒤 1회 재시도");
+                    await Task.Delay(wait, ct).ConfigureAwait(false);
                     return await SendOnceAsync().ConfigureAwait(false);
                 }
             }
@@ -202,35 +255,194 @@ namespace TopDock.Services
             }
         }
 
-        private static async Task<string> SafeReadErrorAsync(HttpResponseMessage response, CancellationToken ct)
+        /// <summary>후보 모델을 모두 써봤는데 전부 한도였다 — 시도한 모델과 리셋 시각을 함께 알려준다.</summary>
+        private static string BuildAllExhaustedMessage(IReadOnlyList<string> candidates, AiException last)
         {
+            string reset = last.RetryDelay is { } delay
+                ? $"약 {Humanize(delay)} 뒤에 다시 채워집니다. "
+                : string.Empty;
+            return $"무료 사용량 한도를 초과했습니다. {string.Join("·", candidates)} 모두 오늘 몫을 다 썼습니다. " +
+                   reset + "설정에서 다른 공급자로 바꾸면 계속 쓸 수 있습니다.";
+        }
+
+        /// <summary>
+        /// 시도할 모델 목록. Gemini 무료 티어는 모델별로 일일 한도가 따로 잡히므로 기본 모델이 소진되면
+        /// 한도가 남아 있는 다음 모델로 넘어간다 (실측: 셋 다 도구 호출·한국어 응답 정상).
+        /// 한도가 큰 lite 계열을 앞에, 품질이 높지만 일일 20회뿐인 3.5-flash를 마지막에 둔다.
+        /// </summary>
+        private static IReadOnlyList<string> BuildModelCandidates(string provider, string requestedModel)
+        {
+            if (provider != "gemini") return new[] { requestedModel };
+
+            var candidates = new List<string> { requestedModel };
+            foreach (string fallback in new[] { "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash" })
+            {
+                if (!candidates.Contains(fallback, StringComparer.OrdinalIgnoreCase)) candidates.Add(fallback);
+            }
+            return candidates;
+        }
+
+        /// <summary>
+        /// 공급자 오류 본문에서 안내에 쓸 정보를 뽑는다. Google은 오류를 JSON 배열로 감싸 보내고
+        /// ([{"error":{...}}]) 상세에 한도 종류·재시도 시각을 담는다 — 이걸 못 읽으면 원인이 통째로 사라진다.
+        /// </summary>
+        private static async Task<AiErrorInfo?> TryParseErrorAsync(HttpResponseMessage response, CancellationToken ct)
+        {
+            string raw;
             try
             {
-                string raw = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                // OpenAI 호환 오류는 {"error":{"message":"..."}} 형태인 경우가 많다
-                using var doc = JsonDocument.Parse(raw);
-                if (doc.RootElement.TryGetProperty("error", out var err) &&
-                    err.TryGetProperty("message", out var msg))
-                {
-                    return msg.GetString() ?? raw;
-                }
-                return raw;
+                raw = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             }
             catch
             {
-                return string.Empty;
+                return null;
+            }
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                JsonElement root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    if (root.GetArrayLength() == 0) return null;
+                    root = root[0];
+                }
+                if (root.ValueKind != JsonValueKind.Object ||
+                    !root.TryGetProperty("error", out var err) ||
+                    err.ValueKind != JsonValueKind.Object)
+                {
+                    return new AiErrorInfo(Trunc(raw, 200), string.Empty, string.Empty, null);
+                }
+
+                string message = StringProp(err, "message");
+                string status = StringProp(err, "status");
+                string quotaId = string.Empty;
+                int? retrySeconds = null;
+
+                if (err.TryGetProperty("details", out var details) && details.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement detail in details.EnumerateArray())
+                    {
+                        if (detail.ValueKind != JsonValueKind.Object) continue;
+
+                        if (detail.TryGetProperty("violations", out var violations) &&
+                            violations.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (JsonElement violation in violations.EnumerateArray())
+                            {
+                                string id = StringProp(violation, "quotaId");
+                                if (id.Length > 0) quotaId = id;
+                            }
+                        }
+
+                        if (retrySeconds is null)
+                        {
+                            // QuotaFailure.RetryInfo.retryDelay 는 "65558.42s" 형태
+                            retrySeconds = ParseDurationSeconds(StringProp(detail, "retryDelay"));
+                        }
+                    }
+                }
+
+                retrySeconds ??= ParseRetryFromMessage(message);
+                return new AiErrorInfo(message, status, quotaId, retrySeconds);
+            }
+            catch (JsonException)
+            {
+                return new AiErrorInfo(Trunc(raw, 200), string.Empty, string.Empty, null);
             }
         }
 
-        private static string TranslateError(int status, string detail)
+        private static string StringProp(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? string.Empty
+                : string.Empty;
+
+        /// <summary>"18h12m38.4s" / "45s" 같은 지연 표기를 초로 바꾼다 (소수부는 버림).</summary>
+        private static int? ParseDurationSeconds(string text)
         {
+            int total = 0;
+            int value = 0;
+            bool hasNumber = false;
+            bool hasUnit = false;
+            bool fractional = false;
+
+            foreach (char c in text)
+            {
+                if (char.IsDigit(c))
+                {
+                    if (!fractional) value = value * 10 + (c - '0');
+                    hasNumber = true;
+                    continue;
+                }
+                if (c == '.' && hasNumber)
+                {
+                    fractional = true;
+                    continue;
+                }
+                if (!hasNumber) continue;
+
+                int multiplier = c switch { 'h' => 3600, 'm' => 60, 's' => 1, _ => 0 };
+                if (multiplier == 0)
+                {
+                    value = 0;
+                    hasNumber = false;
+                    fractional = false;
+                    continue;
+                }
+                total += value * multiplier;
+                hasUnit = true;
+                value = 0;
+                hasNumber = false;
+                fractional = false;
+            }
+            return hasUnit ? total : null;
+        }
+
+        /// <summary>본문 문장에서 "Please retry in 18h12m38.422299609s" 부분을 뽑아낸다.</summary>
+        private static int? ParseRetryFromMessage(string message)
+        {
+            const string marker = "retry in ";
+            int index = message.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return null;
+            return ParseDurationSeconds(message[(index + marker.Length)..]);
+        }
+
+        private static string Humanize(TimeSpan delay)
+        {
+            if (delay.TotalHours >= 1) return $"{(int)delay.TotalHours}시간 {delay.Minutes}분";
+            if (delay.TotalMinutes >= 1) return $"{delay.Minutes}분";
+            return $"{Math.Max(1, (int)Math.Ceiling(delay.TotalSeconds))}초";
+        }
+
+        private static string TranslateError(int status, AiErrorInfo? info, string provider, string model)
+        {
+            if (status == 429) return TranslateQuotaError(info, provider, model);
             return status switch
             {
                 401 or 403 => "API 키가 올바르지 않습니다. 설정에서 키를 확인해 주세요.",
-                404 => $"모델을 찾을 수 없습니다. 설정의 모델 칸을 비워두면 기본 모델을 사용합니다. ({Trunc(detail, 120)})",
-                429 => "무료 사용량 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.",
+                404 => $"모델을 찾을 수 없습니다. 설정의 모델 칸을 비워두면 기본 모델을 사용합니다. ({Trunc(info?.Message ?? string.Empty, 120)})",
                 503 => "AI 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해 주세요.",
-                _ => $"AI 요청 실패 (HTTP {status}) {Trunc(detail, 160)}",
+                _ => $"AI 요청 실패 (HTTP {status}) {Trunc(info?.Message ?? string.Empty, 160)}",
+            };
+        }
+
+        /// <summary>무료 한도 초과(429)를 한도 종류에 맞게 설명한다. "잠시 후"로 뭉개면 일일 한도에선 거짓말이 된다.</summary>
+        private static string TranslateQuotaError(AiErrorInfo? info, string provider, string model)
+        {
+            if (info is { IsDailyQuota: true, RetryDelaySeconds: int daily })
+            {
+                return $"{model}의 무료 일일 한도를 다 썼습니다. 약 {Humanize(TimeSpan.FromSeconds(daily))} 뒤에 다시 채워집니다.";
+            }
+            if (info?.RetryDelaySeconds is int brief)
+            {
+                return $"무료 사용량 한도(분당 제한)를 초과했습니다. 약 {Humanize(TimeSpan.FromSeconds(brief))} 후 다시 시도해 주세요.";
+            }
+            return provider switch
+            {
+                "llm7" => "LLM7 무료 게이트웨이의 분당 한도(30회)를 초과했습니다. 잠시 후 다시 시도해 주세요.",
+                "openrouter" => "OpenRouter 무료 모델의 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.",
+                _ => "무료 사용량 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.",
             };
         }
 
@@ -363,14 +575,44 @@ namespace TopDock.Services
         }
     }
 
+    /// <summary>공급자 오류 본문(JSON)을 해석한 결과.</summary>
+    internal sealed record AiErrorInfo(string Message, string Status, string QuotaId, int? RetryDelaySeconds)
+    {
+        /// <summary>일일 한도 소진 — 분 단위 제한과 달리 몇 초 기다려도 풀리지 않는다.</summary>
+        public bool IsDailyQuota =>
+            QuotaId.Contains("PerDay", StringComparison.OrdinalIgnoreCase) ||
+            RetryDelaySeconds is > 3600;
+    }
+
     /// <summary>사용자에게 안내 가능한 형태의 AI 오류.</summary>
     public class AiException : Exception
     {
         public int StatusCode { get; }
 
-        public AiException(string message, int statusCode = 0) : base(message)
+        /// <summary>공급자가 알려준 재시도 지연. 알 수 없으면 null.</summary>
+        public TimeSpan? RetryDelay { get; }
+
+        /// <summary>일일 단위 한도 소진 여부.</summary>
+        public bool IsDailyQuota { get; }
+
+        /// <summary>오류를 낸 모델 이름.</summary>
+        public string Model { get; }
+
+        /// <summary>금방 풀리는 제한 — 같은 모델로 짧게 기다렸다 한 번 더 시도해도 된다.</summary>
+        public bool IsRetrySoon => !IsDailyQuota && RetryDelay is null or { TotalSeconds: <= 8 };
+
+        public AiException(
+            string message,
+            int statusCode = 0,
+            TimeSpan? retryDelay = null,
+            bool isDailyQuota = false,
+            string model = "")
+            : base(message)
         {
             StatusCode = statusCode;
+            RetryDelay = retryDelay;
+            IsDailyQuota = isDailyQuota;
+            Model = model;
         }
     }
 }

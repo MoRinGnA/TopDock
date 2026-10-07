@@ -61,7 +61,7 @@ namespace TopDock
             AiProviderHintText.Text = provider switch
             {
                 "llm7" => "API 키 없이 바로 사용됩니다 (무료, 분당 30회).",
-                "gemini" => "aistudio.google.com에서 무료 키 발급 가능 (하루 1,500회). 모델 칸은 비워두면 gemini-3.5-flash를 씁니다.",
+                "gemini" => "aistudio.google.com에서 무료 키 발급 가능. 모델 칸은 비워두면 gemini-3.5-flash-lite를 씁니다 (무료 한도가 모델마다 달라, 부족하면 자동으로 다른 모델로 넘어갑니다).",
                 "openrouter" => "openrouter.ai에서 무료 키 발급 가능 (무료 모델 하루 50회).",
                 "upstage" => "console.upstage.ai에서 유료 키를 입력하세요.",
                 "ollama" => "ollama 실행 중이어야 합니다. 예: ollama pull qwen3:4b",

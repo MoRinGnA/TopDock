@@ -209,7 +209,7 @@ bin\Release\net10.0-windows10.0.19041.0\TopDock.exe
 | 프로바이더 | 키 | 비고 |
 |---|---|---|
 | **LLM7** | 불필요 | 기본값. 익명 키로 분당 30회 |
-| Google Gemini | 필요 | 무료 티어 (기본 모델 `gemini-3.5-flash`) |
+| Google Gemini | 필요 | 무료 티어 (기본 모델 `gemini-3.5-flash-lite`) |
 | OpenRouter | 필요 | 무료 모델 사용 가능 |
 | Upstage Solar | 필요 | 유료 |
 | Ollama | 불필요 | 내 PC에서 로컬 실행 |
