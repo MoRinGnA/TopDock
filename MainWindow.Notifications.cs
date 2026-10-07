@@ -74,16 +74,14 @@ namespace TopDock
             UpdateBeamState();
         }
 
-        /// <summary>현재 뷰와 배터리 상태에 맞춰 점·퍼센트를 다시 그린다. 뷰 전환에서도 호출된다.</summary>
+        /// <summary>현재 뷰와 잔량에 맞춰 작은 에너지 코어를 갱신한다.</summary>
         private void ApplyBatteryIndicator(bool flash = false)
         {
             // 일반 상태에서는 아무것도 그리지 않는다 — 조용한 게 기본값.
             if (_batteryLevel == BatteryLevel.Normal)
             {
                 HideBatteryDot(BatteryDot);
-                HideBatteryDot(MediaBatteryDot);
                 StopBatteryPulse();
-                ExpandedBatteryPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -106,26 +104,12 @@ namespace TopDock
 
             BatteryDotCore.Fill = core;
             BatteryDotGlow.Fill = glow;
-            MediaBatteryDotCore.Fill = core;
-            MediaBatteryDotGlow.Fill = glow;
-            ExpandedBatteryDot.Fill = core;
+            // 접힌 아이들·미디어 노치와 기본 확장에서 같은 점 하나가 보인다 — 뷰마다 다른 자리에
+            // 다른 점을 두면 화면을 옮겨 다닐 때마다 눈이 상태 표시를 다시 찾아야 한다.
+            bool showBattery = _currentViewMode is ViewMode.IdleCompact or ViewMode.IdleExpanded or ViewMode.MediaCompact;
+            BatteryDot.Visibility = showBattery ? Visibility.Visible : Visibility.Collapsed;
 
-            // 점은 접힌 아일랜드에만(기본·미디어 재생 중 모두), 퍼센트 텍스트는 펼친 기본 화면에만.
-            BatteryDot.Visibility = _currentViewMode == ViewMode.IdleCompact
-                ? Visibility.Visible : Visibility.Collapsed;
-            MediaBatteryDot.Visibility = _currentViewMode == ViewMode.MediaCompact
-                ? Visibility.Visible : Visibility.Collapsed;
-            ExpandedBatteryPanel.Visibility = _currentViewMode == ViewMode.IdleExpanded
-                ? Visibility.Visible : Visibility.Collapsed;
-            ExpandedBatteryText.Text =
-                $"{(_batteryLevel == BatteryLevel.Charging ? "충전" : "부족")} {Math.Round(_batteryPercent * 100)}%";
-
-            // 점이 보이는 뷰는 한 번에 하나뿐이라, 애니메이션도 보이는 점에만 건다.
-            FrameworkElement? dot = _currentViewMode == ViewMode.MediaCompact ? MediaBatteryDot
-                : _currentViewMode == ViewMode.IdleCompact ? BatteryDot
-                : null;
-
-            if (dot == null)
+            if (!showBattery)
             {
                 StopBatteryPulse();
                 return;
@@ -134,8 +118,8 @@ namespace TopDock
             if (flash)
             {
                 // 꽂는 순간: 밝게 나타났다가 잠깐 어두워지고, 끝나면 pulse로 넘어간다.
-                dot.BeginAnimation(UIElement.OpacityProperty, null);
-                dot.Opacity = 1;
+                BatteryDot.BeginAnimation(UIElement.OpacityProperty, null);
+                BatteryDot.Opacity = 1;
                 var blink = new DoubleAnimation(1.0, 0.35, new Duration(TimeSpan.FromMilliseconds(260)))
                 {
                     AutoReverse = true,
@@ -143,13 +127,13 @@ namespace TopDock
                 blink.Completed += (_, _) =>
                 {
                     // 깜박이는 사이에 뷰가 바뀌었으면 그 점은 이제 남의 것이다
-                    if (dot.Visibility == Visibility.Visible) StartBatteryPulse(dot);
+                    if (BatteryDot.Visibility == Visibility.Visible) StartBatteryPulse(BatteryDot);
                 };
-                dot.BeginAnimation(UIElement.OpacityProperty, blink);
+                BatteryDot.BeginAnimation(UIElement.OpacityProperty, blink);
             }
             else
             {
-                StartBatteryPulse(dot);
+                StartBatteryPulse(BatteryDot);
             }
         }
 
@@ -200,7 +184,6 @@ namespace TopDock
         private static readonly Color NoticeInfo = Color.FromRgb(0x0A, 0x84, 0xFF);   // Windows 알림 — 기존 파랑
         private static readonly Color NoticeTool = Color.FromRgb(0xFF, 0x9F, 0x0A);   // 도구 실행 — 앰버
         private static readonly Color NoticeThink = Color.FromRgb(0xBF, 0x5A, 0xF2);  // AI 사고·응답 중 — 퍼플
-        private static readonly Color NoticeDone = Color.FromRgb(0x30, 0xD1, 0x58);   // AI 완료 — 그린
         private static readonly Color NoticeCharging = Color.FromRgb(0x34, 0xC7, 0x59); // 충전 연결 — 그린
 
         /// <summary>지금 떠 있는 알림의 출처 — AI·도구 알림이 서로를 잘못 걷지 않게 구분한다.</summary>
@@ -214,7 +197,6 @@ namespace TopDock
         private static readonly Geometry IconBell = Freeze(Geometry.Parse("M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"));
         private static readonly Geometry IconGear = Freeze(Geometry.Parse("M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"));
         private static readonly Geometry IconSparkle = Freeze(Geometry.Parse("M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2z"));
-        private static readonly Geometry IconCheck = Freeze(Geometry.Parse("M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"));
         private static readonly Geometry IconBolt = Freeze(Geometry.Parse("M7 2v11h3v9l7-12h-4l3-8z"));
 
         private static Geometry Freeze(Geometry g) { g.Freeze(); return g; }
@@ -277,30 +259,24 @@ namespace TopDock
             _ => "작업 실행 중…",
         };
 
-        /// <summary>AI 사고 알림 — 비서 화면이 열려 있으면 오브가 이미 사고를 보여주므로 노치를 빼앗지 않는다.</summary>
+        /// <summary>AI 사고 알림 — 비서 화면이나 작업 중 아일랜드가 이미 상태를 보여주므로 노치를 빼앗지 않는다.</summary>
         private void ShowThinkingNotice()
         {
-            if (_currentViewMode == ViewMode.Assistant) return;
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
             ShowNotchNotice(IconSparkle, NoticeThink, "AI", "생각 중…", null,
                 null, NoticeSource.Assistant);
         }
 
         private void ShowToolNotice(string toolName)
         {
-            // 비서 화면이 열려 있으면 오브·상태가 이미 무슨 일인지 보여준다 — 노치를 빼앗지 않는다
-            if (_currentViewMode == ViewMode.Assistant) return;
+            // 비서 화면이나 아일랜드가 이미 진행 중임을 보여준다 — 노치를 빼앗지 않는다
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
             ShowNotchNotice(IconGear, NoticeTool, "실행", ToolNoticeText(toolName), null,
                 null, NoticeSource.Tool);
         }
 
-        /// <summary>지시가 끝났다는 짧은 신호 — 답변 본문은 노치를 다시 펼치면 그대로 있다.</summary>
-        private void ShowDoneNotice(string answer)
-        {
-            if (_currentViewMode == ViewMode.Assistant) return;
-            ShowNotchNotice(IconCheck, NoticeDone, "AI", "완료",
-                string.IsNullOrWhiteSpace(answer) ? null : Collapse(answer, 90),
-                TimeSpan.FromSeconds(2.4), NoticeSource.Assistant);
-        }
+        // AI 완료는 별도 화면을 띄우지 않는다 — 배터리 점과 같은 자리의 상태 점이 초록으로
+        // 잠깐 고정되는 것으로 알린다(MainWindow.Assistant.ShowAssistantStateDone). 글씨는 쓰지 않는다.
 
         /// <summary>AI 상태 알림이 아직 떠 있을 때만 걷는다 — 도구 알림 등 남의 것을 건드리지 않는다.</summary>
         private void ClearAssistantNotice()
@@ -326,6 +302,19 @@ namespace TopDock
             {
                 // 알림이 비서 대화를 잠시 가렸던 경우라면 비서 화면으로 되돌아간다
                 SwitchViewMode(ViewMode.Assistant);
+                return;
+            }
+            if (back == ViewMode.AssistantCompact)
+            {
+                // 작업 중 아일랜드를 가렸던 경우 — 아직 돌고 있으면 아일랜드로, 끝났으면 평소 화면으로
+                if (_assistantBusy)
+                {
+                    SwitchViewMode(ViewMode.AssistantCompact);
+                    return;
+                }
+                SwitchViewMode(_isExpanded
+                    ? (HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded)
+                    : (HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact));
                 return;
             }
             SwitchViewMode(_isExpanded

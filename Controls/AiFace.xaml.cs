@@ -8,26 +8,38 @@ using System.Windows.Threading;
 namespace TopDock.Controls
 {
     /// <summary>
-    /// AI 비서 얼굴. 상태에 따라 표정이 바뀐다:
-    /// Idle(깜빡임+시선 이동) / Alert(눈 큼) / Thinking(가늘고 위) / Talking(통통) / Sad(아래).
+    /// AI 비서 얼굴. 민무늬 흰 눈 두 개가 전부다.
+    /// Idle     : 보통 크기, 깜빡임 + 시선 이동 + 은은한 호흡
+    /// Thinking : 조금 가늘게 뜨고 시선을 위로, 얼굴이 미세하게 흔들림
+    /// Alert    : 눈을 크게 뜬 집중(도구 실행) 표정
+    /// Talking  : 응답 조각이 올 때마다 눈이 오므라졌다 풀리는 발화 표정
+    /// Sad      : 눈이 작아지고 시선이 아래로
+    /// 눈동자·눈썹·입은 쓰지 않는다 — 넣으면 표정이 무섭게 읽힌다(실측 피드백).
+    /// 반복 연출은 이 컨트롤이 자기 상태와 보이는 여부만 보고 스스로 켜고 끈다.
     /// </summary>
     public partial class AiFace : UserControl
     {
         public enum FaceState { Idle, Alert, Thinking, Talking, Sad }
 
+        // 발화 리듬: 한 번 오므렸다 풀리는 시간과 연속 발화의 최소 간격
+        private const double SpeechPulseMs = 190;
+        private const double SpeechMinGapMs = 120;
+        private const double SpeechSqueeze = 0.76;
+
         private FaceState _state = FaceState.Idle;
         private readonly DispatcherTimer _blinkTimer;
         private readonly DispatcherTimer _gazeTimer;
-        private readonly DispatcherTimer _talkTimer;
+        private readonly DispatcherTimer _speechTimer;
         private readonly Random _rand = new();
-        private Storyboard? _talkStoryboard;
+        private Storyboard? _wobbleStoryboard;
         private Storyboard? _breathStoryboard;
+        private DateTime _lastPulse = DateTime.MinValue;
 
         public AiFace()
         {
             InitializeComponent();
-            IsVisibleChanged += (_, _) => SyncTimers();
-            Loaded += (_, _) => SyncTimers();
+            IsVisibleChanged += (_, _) => SyncAnimations();
+            Loaded += (_, _) => SyncAnimations();
             Unloaded += (_, _) => StopAnimations();
 
             _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(3400) };
@@ -36,141 +48,190 @@ namespace TopDock.Controls
             _gazeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2200) };
             _gazeTimer.Tick += (_, _) => MoveGaze();
 
-            _talkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
-            _talkTimer.Tick += (_, _) => BounceOnce();
+            // 응답 조각이 띄엄띄엄 와도 눈이 멈춰 보이지 않도록 최소한의 리듬을 만든다.
+            _speechTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(210) };
+            _speechTimer.Tick += (_, _) => PulseSpeech();
         }
 
         public void SetState(FaceState state)
         {
             if (_state == state)
             {
-                SyncTimers();
+                SyncAnimations();
                 return;
             }
             _state = state;
             ApplyState();
         }
 
-        private void ApplyState()
+        /// <summary>
+        /// 응답 텍스트가 한 조각 도착할 때마다 호출한다.
+        /// 글자가 흐르는 박자에 맞춰 눈이 오므라졌다 풀리는 것이 이 얼굴의 발화 연동이다.
+        /// </summary>
+        public void PulseSpeech()
         {
-            StopBreathing();
+            if (_state != FaceState.Talking) return;
 
-            double targetEyeH = _state switch
-            {
-                FaceState.Alert => 20,
-                FaceState.Thinking => 5,
-                FaceState.Sad => 8,
-                _ => 16
-            };
+            var now = DateTime.UtcNow;
+            if ((now - _lastPulse).TotalMilliseconds < SpeechMinGapMs) return;
+            _lastPulse = now;
 
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            var squeeze = new DoubleAnimationUsingKeyFrames
+            {
+                Duration = TimeSpan.FromMilliseconds(SpeechPulseMs),
+            };
+            squeeze.KeyFrames.Add(new EasingDoubleKeyFrame(SpeechSqueeze, KeyTime.FromPercent(0.35), ease));
+            squeeze.KeyFrames.Add(new EasingDoubleKeyFrame(1.0, KeyTime.FromPercent(1.0), ease));
+
+            LeftBlink.BeginAnimation(ScaleTransform.ScaleYProperty, squeeze);
+            RightBlink.BeginAnimation(ScaleTransform.ScaleYProperty, squeeze.Clone());
+
+            // 발화할 때 눈 전체도 아주 살짝 따라 움직인다
+            EyesBounce.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(-1.4, TimeSpan.FromMilliseconds(110))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut },
+                    AutoReverse = true,
+                });
+        }
+
+        /// <summary>상태별 눈 높이와 시선. 눈 폭은 항상 같다.</summary>
+        private static (double Height, double GazeY) EyeShape(FaceState state) => state switch
+        {
+            // 실행: 눈을 크게 뜬다
+            FaceState.Alert => (20, 0),
+            // 생각: 눈은 뜬 채로 시선만 위로 (눈을 감으면 무슨 상태인지 읽히지 않는다)
+            FaceState.Thinking => (13, -3),
+            FaceState.Sad => (8, 3),
+            _ => (16, 0),
+        };
+
+        private void ApplyState()
+        {
+            // 이전 상태의 반복 애니메이션을 먼저 걷어낸 뒤 새 표정을 걸어야 방금 건 애니메이션이 취소되지 않는다.
+            StopBreathing();
+            StopThinkingWobble();
+
+            var (height, gazeY) = EyeShape(_state);
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            var sizeTime = TimeSpan.FromMilliseconds(220);
+
             foreach (var eye in new[] { LeftEye, RightEye })
             {
-                var h = new DoubleAnimation(targetEyeH, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
-                eye.BeginAnimation(Border.HeightProperty, h);
+                eye.BeginAnimation(HeightProperty, new DoubleAnimation(height, sizeTime) { EasingFunction = ease });
             }
 
-            double haloTarget = _state == FaceState.Thinking ? 0.85 : 0.5;
-            Halo.BeginAnimation(OpacityProperty, new DoubleAnimation(haloTarget, TimeSpan.FromMilliseconds(400)));
+            Halo.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(_state == FaceState.Thinking ? 0.85 : 0.5, TimeSpan.FromMilliseconds(400)));
 
-            // 토크 바운스는 상태 전환마다 재구성
-            if (_talkStoryboard != null)
-            {
-                _talkStoryboard.Stop();
-                _talkStoryboard = null;
-            }
+            // 발화 펄스도 눈 바운스를 쓰므로, 바운스 정리는 먼저 끝낸다
             EyesBounce.BeginAnimation(TranslateTransform.YProperty, null);
             EyesBounce.Y = 0;
 
-            if (_state == FaceState.Thinking)
+            LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(gazeY, sizeTime) { EasingFunction = ease });
+            RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(gazeY, sizeTime) { EasingFunction = ease });
+
+            // 말하기 시작하는 순간부터 눈이 박자를 탄다
+            if (_state == FaceState.Talking)
             {
-                // 눈을 위로 살짝
-                LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-3, TimeSpan.FromMilliseconds(220)));
-                RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-3, TimeSpan.FromMilliseconds(220)));
-            }
-            else if (_state == FaceState.Sad)
-            {
-                LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(3, TimeSpan.FromMilliseconds(220)));
-                RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(3, TimeSpan.FromMilliseconds(220)));
-            }
-            else
-            {
-                LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(180)));
-                RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(180)));
+                _lastPulse = DateTime.MinValue;
+                PulseSpeech();
             }
 
-            SyncTimers();
+            SyncAnimations();
         }
 
-        private void SyncTimers()
+        /// <summary>지금 상태와 보이는 여부에 맞춰 반복 애니메이션을 켜고 끈다.</summary>
+        private void SyncAnimations()
         {
-            bool run = IsVisible && _state is FaceState.Idle or FaceState.Talking;
-            if (run)
+            bool visible = IsVisible;
+            bool lively = visible && _state is FaceState.Idle or FaceState.Alert or FaceState.Thinking or FaceState.Talking;
+
+            if (lively)
             {
                 if (!_blinkTimer.IsEnabled) _blinkTimer.Start();
-                if (!_gazeTimer.IsEnabled && _state == FaceState.Idle) _gazeTimer.Start();
-                if (_state == FaceState.Idle) StartBreathing();
+                if (!_gazeTimer.IsEnabled) _gazeTimer.Start();
             }
             else
             {
                 _blinkTimer.Stop();
                 _gazeTimer.Stop();
+            }
+
+            if (visible && _state == FaceState.Idle)
+            {
+                StartBreathing();
+            }
+            else if (_breathStoryboard != null)
+            {
                 StopBreathing();
             }
 
-            if (_state == FaceState.Talking)
+            if (visible && _state == FaceState.Thinking)
             {
-                if (!_talkTimer.IsEnabled) _talkTimer.Start();
+                StartThinkingWobble();
+            }
+            else if (_wobbleStoryboard != null)
+            {
+                StopThinkingWobble();
+            }
+
+            if (visible && _state == FaceState.Talking)
+            {
+                if (!_speechTimer.IsEnabled) _speechTimer.Start();
             }
             else
             {
-                _talkTimer.Stop();
+                _speechTimer.Stop();
             }
         }
 
         private async System.Threading.Tasks.Task BlinkAsync()
         {
-            if (_state is not (FaceState.Idle or FaceState.Talking)) return;
+            if (_state is not (FaceState.Idle or FaceState.Alert or FaceState.Thinking or FaceState.Talking)) return;
             var dur = TimeSpan.FromMilliseconds(90);
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
 
-            foreach (var blink in new[] { LeftBlink, RightBlink })
-            {
-                blink.BeginAnimation(ScaleTransform.ScaleYProperty,
-                    new DoubleAnimation(0.08, dur) { EasingFunction = ease, AutoReverse = true });
-            }
+            BlinkOnce(dur, ease);
 
             // 가끔 두 번 연속 깜빡임
             if (_rand.NextDouble() < 0.22)
             {
                 await System.Threading.Tasks.Task.Delay(240);
-                foreach (var blink in new[] { LeftBlink, RightBlink })
-                {
-                    blink.BeginAnimation(ScaleTransform.ScaleYProperty,
-                        new DoubleAnimation(0.08, dur) { EasingFunction = ease, AutoReverse = true });
-                }
+                BlinkOnce(dur, ease);
+            }
+        }
+
+        private void BlinkOnce(TimeSpan dur, IEasingFunction ease)
+        {
+            foreach (var blink in new[] { LeftBlink, RightBlink })
+            {
+                blink.BeginAnimation(ScaleTransform.ScaleYProperty,
+                    new DoubleAnimation(0.08, dur) { EasingFunction = ease, AutoReverse = true });
             }
         }
 
         private void MoveGaze()
         {
-            if (_state != FaceState.Idle) return;
-            double x = _rand.Next(-4, 5);
-            double y = _rand.Next(-2, 4);
+            if (_state == FaceState.Sad) return;
+
+            // 사고 중에도 시선은 고정하지 않는다. 표현은 유지하되 idle보다 이동 폭을 줄인다.
+            (int minX, int maxX, int minY, int maxY, double baseY) = _state switch
+            {
+                FaceState.Thinking => (-2, 3, -1, 2, -3),
+                FaceState.Alert => (-2, 3, -1, 2, 0),
+                FaceState.Talking => (-2, 3, -1, 2, 0),
+                _ => (-4, 5, -2, 4, 0),
+            };
+            double x = _rand.Next(minX, maxX);
+            double y = baseY + _rand.Next(minY, maxY);
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
             var dur = TimeSpan.FromMilliseconds(360);
             LeftGaze.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(x, dur) { EasingFunction = ease });
             RightGaze.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(x, dur) { EasingFunction = ease });
             LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y, dur) { EasingFunction = ease });
             RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y, dur) { EasingFunction = ease });
-        }
-
-        private void BounceOnce()
-        {
-            var dur = TimeSpan.FromMilliseconds(130);
-            var ease = new SineEase { EasingMode = EasingMode.EaseOut };
-            EyesBounce.BeginAnimation(TranslateTransform.YProperty,
-                new DoubleAnimation(-3.5, dur) { EasingFunction = ease, AutoReverse = true });
         }
 
         private void StartBreathing()
@@ -206,47 +267,44 @@ namespace TopDock.Controls
             _breathStoryboard.Begin();
         }
 
+        /// <summary>호흡만 걷어낸다. 후광 페이드는 건드리지 않는다 — 방금 건 표정 페이드를 취소하게 된다.</summary>
         private void StopBreathing()
         {
             _breathStoryboard?.Stop();
             _breathStoryboard = null;
-            LeftBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            RightBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            LeftBlink.ScaleX = 1;
-            RightBlink.ScaleX = 1;
-            Halo.BeginAnimation(UIElement.OpacityProperty, null);
-            Halo.Opacity = _state == FaceState.Thinking ? 0.85 : 0.5;
         }
 
         private void StopAnimations()
         {
             _blinkTimer.Stop();
             _gazeTimer.Stop();
-            _talkTimer.Stop();
+            _speechTimer.Stop();
             StopBreathing();
+            StopThinkingWobble();
         }
 
-        /// <summary>Thinking 상태에서의 미세 흔들림 시작/중지.</summary>
-        public void StartThinkingWobble()
+        /// <summary>Thinking 상태에서의 미세 흔들림 — 얼굴 전체를 아주 조금 옆으로 흔든다.</summary>
+        private void StartThinkingWobble()
         {
-            if (_talkStoryboard != null) return;
-            var anim = new DoubleAnimation(-1.5, 1.5, TimeSpan.FromMilliseconds(280))
+            if (_wobbleStoryboard != null) return;
+
+            var anim = new DoubleAnimation(-1.2, 1.2, TimeSpan.FromMilliseconds(300))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             };
-            _talkStoryboard = new Storyboard();
+            _wobbleStoryboard = new Storyboard();
             Storyboard.SetTarget(anim, EyesBounce);
             Storyboard.SetTargetProperty(anim, new PropertyPath(TranslateTransform.XProperty));
-            _talkStoryboard.Children.Add(anim);
-            _talkStoryboard.Begin();
+            _wobbleStoryboard.Children.Add(anim);
+            _wobbleStoryboard.Begin();
         }
 
-        public void StopThinkingWobble()
+        private void StopThinkingWobble()
         {
-            _talkStoryboard?.Stop();
-            _talkStoryboard = null;
+            _wobbleStoryboard?.Stop();
+            _wobbleStoryboard = null;
             EyesBounce.BeginAnimation(TranslateTransform.XProperty, null);
             EyesBounce.X = 0;
         }

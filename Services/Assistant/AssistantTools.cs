@@ -14,7 +14,7 @@ namespace TopDock.Services
     /// </summary>
     public sealed class AssistantTools
     {
-        /// <summary>도구 실행 직전/직후에 울린다. 호스트(UI)가 오브 같은 피드백을 붙이는 지점.</summary>
+        /// <summary>도구 실행 직전/직후에 울린다. 호스트(UI)가 진행 상태 피드백을 연결하는 지점.</summary>
         public event Action<string>? ToolStarted;
         public event Action<string>? ToolFinished;
 

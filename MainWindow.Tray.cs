@@ -47,11 +47,11 @@ namespace TopDock
 
         private void AssistantAiButton_Click(object sender, RoutedEventArgs e)
         {
-            // 새 지시: 기록을 비우고 오브를 대기 상태로 — 텍스트 없이 초기화
+            // 새 지시: 기록을 비우고 얼굴을 기본 상태로 초기화
             if (_assistantBusy) return;
             _assistant.ResetConversation();
             ClearAssistantConversation();
-            ShowConversationOrb(Controls.OrbKind.Breathing);
+            ShowAssistantFace(Controls.OrbKind.Breathing);
             ActivateSelfAndFocusInput();
         }
 

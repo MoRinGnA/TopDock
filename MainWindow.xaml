@@ -223,8 +223,7 @@
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
 
-            <!-- Main notch border — 배터리 상태는 테두리를 칠하지 않고
-                 안쪽 우측의 작은 점(BatteryDot)과 펼침 뷰의 퍼센트 텍스트로만 알린다. -->
+            <!-- Main notch border — 배터리 상태는 테두리를 칠하지 않고 안쪽 우측 점으로 조용히 알린다. -->
             <Border x:Name="NotchBorder" Width="100" Height="38"
                     Style="{StaticResource DarkNotchStyle}"
                     MouseEnter="Notch_MouseEnter"
@@ -262,6 +261,15 @@
                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Grid>
 
+                        <!-- AI 작업 중 아일랜드: 아이들 아일랜드와 같은 자리·같은 크기(100×38)에 눈만 둔다.
+                             문구가 없으니 폭도 아이들 아일랜드 그대로 — 작업마다 노치가 늘었다 줄지 않는다.
+                             상태는 같은 자리의 상태 점(AssistantStatusChip)이 색으로 말한다. -->
+                        <Grid x:Name="AssistantCompactView" Opacity="0" IsHitTestVisible="False"
+                              VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <controls:AiFace x:Name="CompactAssistantFace" Width="36" Height="25"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+
                         <!-- Notification Compact — 라벨은 출처별 아이콘+색으로, 제목은 문장으로 -->
                         <Grid x:Name="NotificationCompactView" Opacity="0" IsHitTestVisible="False"
                               Margin="14,0,14,0" VerticalAlignment="Center">
@@ -281,9 +289,7 @@
                                        VerticalAlignment="Center" Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                         </Grid>
 
-                        <!-- AI 비서: 오브 중심 몰입형 — 오브가 주인공, 상태와 결과가 그 곁에 뜬다.
-                             위(무대)에서 아래(입력)로 흐르는 세 단. 결과가 비면 가운데 단이 0 높이로
-                             접혀 오브가 무대 정중앙에 선다 — 예전의 검은 공허가 나오지 않는다. -->
+                        <!-- AI 비서: 눈·입 표정과 상태 컬러를 함께 보여준다. -->
                         <Grid x:Name="AssistantView" Opacity="0" IsHitTestVisible="False"
                               Margin="18,12,18,12">
                             <!-- 비네트 — 중앙은 아주 옅게 밝고 가장자리는 살짝 가라앉아 공간감을 준다.
@@ -297,48 +303,19 @@
                                 </RadialGradientBrush>
                             </Grid.Background>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="*"/>     <!-- 무대: 오브 + 상태 -->
+                                <RowDefinition Height="*"/>     <!-- 얼굴 무대 -->
                                 <RowDefinition Height="Auto"/>  <!-- 응답 -->
                                 <RowDefinition Height="Auto"/>  <!-- 입력 -->
                             </Grid.RowDefinitions>
 
-                            <!-- 무대 — 남는 공간의 한가운데에 오브를 세운다 -->
-                            <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Grid Width="108" Height="108">
-                                    <!-- 뒤에 은은한 광 — 몰입감. 오브 크기에 맞춰 두어 노치 밖으로 새지 않는다 -->
-                                    <Ellipse Width="140" Height="140" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                             IsHitTestVisible="False">
-                                        <Ellipse.Fill>
-                                            <RadialGradientBrush>
-                                                <GradientStop Color="#26FFFFFF" Offset="0"/>
-                                                <GradientStop Color="#0EFFFFFF" Offset="0.5"/>
-                                                <GradientStop Color="#00FFFFFF" Offset="1"/>
-                                            </RadialGradientBrush>
-                                        </Ellipse.Fill>
-                                    </Ellipse>
-                                    <controls:ThinkingOrb x:Name="CenterOrb" Width="108" Height="108"
-                                                          Kind="Breathing" Ink="#F2F2F7"
-                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Grid>
-                                <TextBlock x:Name="AssistantStatusText" Text=""
-                                           HorizontalAlignment="Center" Margin="0,12,0,0" MaxWidth="340"
-                                           FontSize="12.5" TextTrimming="CharacterEllipsis">
-                                    <TextBlock.Foreground>
-                                        <!-- 원작 디테일: 흐린 잉크 위로 밝은 빛이 스치는 광택 스윕 -->
-                                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"
-                                                             MappingMode="RelativeToBoundingBox">
-                                            <GradientStop Color="#8E8E93" Offset="0"/>
-                                            <GradientStop x:Name="StatusSheenBright" Color="#FFFFFF" Offset="0.5"/>
-                                            <GradientStop Color="#8E8E93" Offset="1"/>
-                                        </LinearGradientBrush>
-                                    </TextBlock.Foreground>
-                                </TextBlock>
-                            </StackPanel>
+                            <!-- 무대 — 얼굴만. 상태는 배터리 점과 같은 자리에 있는 상태 점이 맡는다. -->
+                            <controls:AiFace x:Name="AssistantFace" Grid.Row="0" Width="132" Height="96"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
 
-                            <!-- 응답 — 오브 아래에 떠오른다. 내용이 없으면 저절로 0 높이 -->
+                            <!-- 응답 — 상태 무대 아래. 내용이 없으면 저절로 0 높이 -->
                             <ScrollViewer Grid.Row="1" x:Name="AssistantScroll" MaxHeight="104"
                                           VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
-                                          Margin="22,8,22,0">
+                                          Margin="22,8,58,0">
                                 <TextBlock x:Name="AssistantLatestResponseText" Text=""
                                            Foreground="#E8FFFFFF" FontSize="13" FontWeight="Medium"
                                            TextWrapping="Wrap"/>
@@ -356,7 +333,7 @@
                                                  VerticalContentAlignment="Center"
                                                  KeyDown="AssistantInput_KeyDown"/>
                                         <!-- WPF TextBox엔 플레이스홀더가 없다 — 겹쳐 두고 비었을 때만 보인다 -->
-                                        <TextBlock Text="지시를 입력하세요…" Foreground="#5C5C63"
+                                        <TextBlock Text="지시…" Foreground="#5C5C63"
                                                    FontSize="13" FontWeight="Medium"
                                                    VerticalAlignment="Center" Margin="1,0,0,0"
                                                    IsHitTestVisible="False">
@@ -423,24 +400,17 @@
                                        Foreground="#E5FFFFFF" FontSize="13" FontWeight="Medium" TextWrapping="Wrap" MaxHeight="80" TextTrimming="WordEllipsis"/>
                         </Grid>
 
-                        <!-- Idle expanded: 얼굴 + 배터리 퍼센트 한 줄 (텍스트·버튼 최소화) -->
+                        <!-- Idle expanded: 얼굴 아래 충전/저전력 상태 배지 -->
                         <StackPanel x:Name="IdleExpandedView" Opacity="0" IsHitTestVisible="False"
                                     VerticalAlignment="Center" HorizontalAlignment="Center">
                             <controls:AiFace x:Name="ExpandedFace" Width="58" Height="40"
                                              HorizontalAlignment="Center"/>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
-                                        Margin="0,12,0,0" Visibility="Collapsed" x:Name="ExpandedBatteryPanel">
-                                <Ellipse x:Name="ExpandedBatteryDot" Width="6" Height="6"
-                                         Fill="#34C759" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="ExpandedBatteryText" Text=""
-                                           Margin="6,0,0,0" VerticalAlignment="Center"
-                                           Foreground="#A8A8AD" FontSize="12" FontWeight="Medium"/>
-                            </StackPanel>
                         </StackPanel>
 
-                        <!-- Media compact -->
+                        <!-- Media compact — 오른쪽 여백 34 = 이퀄라이저(약 14) + 상태 점 자리(20).
+                             점 자리는 비워 둔다. 배터리 점도 AI 상태 점도 같은 자리(MainContainer 우측 끝 12px)를 쓴다. -->
                         <Grid x:Name="MediaCompactView" Opacity="0" IsHitTestVisible="False"
-                              Margin="14,0,14,0" VerticalAlignment="Center">
+                              Margin="14,0,34,0" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
@@ -457,13 +427,6 @@
                                        Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                             <StackPanel x:Name="EqualizerPanel" Grid.Column="2" Orientation="Horizontal"
                                         VerticalAlignment="Center" Margin="10,0,0,0">
-                                <!-- 배터리 상태 점과 오디오 비주얼라이제이션의 좌우 배치를 교환 -->
-                                <Grid x:Name="MediaBatteryDot" Width="12" Height="12"
-                                      Margin="0,0,8,0" VerticalAlignment="Center"
-                                      Visibility="Collapsed" IsHitTestVisible="False">
-                                    <Ellipse x:Name="MediaBatteryDotGlow" Width="12" Height="12" Opacity="0.3" Fill="#34C759"/>
-                                    <Ellipse x:Name="MediaBatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
-                                </Grid>
                                 <!-- 색은 코드에서 현재 곡의 색(테두리 빛과 동일)으로 바꿔 끼운다 -->
                                 <Border x:Name="EqBar1" Width="2.5" Height="3" CornerRadius="1.25"
                                         Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
@@ -643,14 +606,26 @@
                         </Grid>
                     </Border>
 
-                    <!-- 배터리 상태 점 (접힌 기본 아일랜드 전용)
-                         일반=안 그림 / 충전 중=녹색 + 은은한 pulse / 부족=적색 고정 -->
+                    <!-- 공용 상태 점 자리 — 오른쪽 끝에서 12px, 12×12 후광 + 5×5 코어.
+                         배터리도 AI도 이 한 자리만 쓴다. 위치가 하나라 화면이 바뀌어도 눈이 옮겨 다니지 않는다.
+                           배터리: 일반=안 그림 / 충전 중=녹색 + 은은한 pulse / 부족=적색 고정
+                           AI:     생각=보라 / 실행=주황 / 응답=파랑 / 완료=초록 (글씨 없음) -->
                     <Grid x:Name="BatteryDot" Width="12" Height="12"
                           HorizontalAlignment="Right" VerticalAlignment="Center"
                           Margin="0,0,12,0" Visibility="Collapsed" IsHitTestVisible="False">
                         <Ellipse x:Name="BatteryDotGlow" Width="12" Height="12"
                                  Opacity="0.3" Fill="#34C759"/>
                         <Ellipse x:Name="BatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
+                    </Grid>
+
+                    <!-- AI 상태 점 — 배터리 점과 같은 자리·같은 크기. 색과 숨쉬는 빛만으로 상태를 말한다.
+                         색은 코드가 상태에 맞춰 끼운다 (ApplyAssistantIndicator). -->
+                    <Grid x:Name="AssistantStatusChip" Width="12" Height="12"
+                          HorizontalAlignment="Right" VerticalAlignment="Center"
+                          Margin="0,0,12,0" Visibility="Collapsed" IsHitTestVisible="False">
+                        <Ellipse x:Name="AssistantStatusGlow" Width="12" Height="12"
+                                 Opacity="0.3" Fill="#B69CFF"/>
+                        <Ellipse x:Name="AssistantStatusCore" Width="5" Height="5" Fill="#B69CFF"/>
                     </Grid>
 
                     <!-- 복사 피드백: 노치 안쪽 우측에 잠깐 스며드는 배지.

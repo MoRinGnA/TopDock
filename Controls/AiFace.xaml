@@ -15,7 +15,8 @@
                 </Ellipse.Fill>
             </Ellipse>
 
-            <!-- 두 눈: 깜빡임(ScaleY) + 시선(Translate) -->
+            <!-- 두 눈: 민무늬 흰 알약. 눈동자를 넣거나 기울이면 무섭게 읽혀서 넣지 않는다.
+                 깜빡임(ScaleY) + 시선(Translate) + 발화 박자(ScaleY)만 쓴다. -->
             <Canvas x:Name="EyesCanvas" Width="40" Height="26" VerticalAlignment="Center">
                 <Canvas.RenderTransform>
                     <TranslateTransform x:Name="EyesBounce"/>

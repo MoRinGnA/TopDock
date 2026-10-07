@@ -494,7 +494,8 @@ namespace TopDock
         /// <summary>노치 본체 클릭 → 기록 열기/닫기. 확장 뷰의 버튼들은 자기 클릭을 먼저 처리한다.</summary>
         private void Notch_Click(object sender, MouseButtonEventArgs e)
         {
-            if (_currentViewMode == ViewMode.Assistant) return;   // 대화 중엔 입력을 가로채지 않는다
+            // 대화 중·작업 중엔 입력을 가로채지 않는다 — 노치 클릭으로 기록 패널을 열지 않는다
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
             if (_clipboardHistory.Count == 0) return;
 
             ToggleClipboardHistory();

@@ -12,7 +12,7 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
-        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded, Assistant }
+        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded, Assistant, AssistantCompact }
 
         /// <summary>배터리는 퍼센트가 아니라 3분류로만 판단한다.</summary>
         private enum BatteryLevel { Normal, Charging, Low }
@@ -130,6 +130,7 @@ namespace TopDock
         private CancellationTokenSource? _assistantCts;
         private bool _assistantBusy;
         private bool _assistantStreaming; // 첫 델타 이후 응답 스트리밍 중인가
+        private bool _assistantToolExecuting; // 도구 실행 중이면 탭을 다시 열어도 실행 표정을 유지한다.
 
         // ── 배터리 표시 ──
         private BatteryLevel _batteryLevel = BatteryLevel.Normal;
@@ -154,7 +155,7 @@ namespace TopDock
         private ViewMode _viewModeBeforeNotification = ViewMode.IdleCompact;
         private string _lastMediaKey = string.Empty;
         private Color? _albumColor;   // 현재 트랙 앨범 지배색 — 노치 테두리 빛에 물린다
-        private bool _orbCentral;     // 중앙(작업 중) 오브가 떠 있는가
+        private bool _orbCentral;     // 작업 중 노치 테두리 강조가 활성화되어 있는가
         private string _lastBeamState = "";
         private bool _isExpanded = false;
 
@@ -169,8 +170,6 @@ namespace TopDock
         public MainWindow()
         {
             InitializeComponent();
-            StartStatusSheen(); // 상태 텍스트 광택 스윕 (원작 thinking-orbs 디테일)
-
             // 세 바가 브러시 하나를 공유 — UpdateEqualizerAccent가 색만 갈아 끼우면 전부 바뀐다
             EqBar1.Background = _equalizerBrush;
             EqBar2.Background = _equalizerBrush;
@@ -189,19 +188,24 @@ namespace TopDock
             _assistantTools = new AssistantTools(_mediaService, _audioService);
             _assistantTools.ToolStarted += name =>
             {
-                // 도구가 실제로 하는 일을 오브 디자인으로 드러낸다(검색=Globe, 연결=Web, 소리=Wave).
-                var (kind, status) = OrbForTool(name);
-                PostOrb(kind, status);
-                // 비서 화면이 닫혀 있으면 무엇이 실행 중인지 노치 알림으로도 알린다
-                Dispatcher.BeginInvoke(new Action(() => ShowToolNotice(name)));
+                var kind = OrbForTool(name);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _assistantToolExecuting = true;
+                    ShowAssistantFace(kind);
+                    // 비서 화면이 닫혀 있으면 무엇이 실행 중인지 노치 알림으로도 알린다
+                    ShowToolNotice(name);
+                }));
             };
             _assistantTools.ToolFinished += _ =>
             {
-                // 도구가 끝나면 모델 추론이 이어지므로 '사고 중'으로 — 단, 이미 응답이
-                // 흐르기 시작했다면(델타 수신 뒤) 헤더의 응답 오브로 돌아간다.
-                PostOrb(_assistantStreaming ? Controls.OrbKind.Composing : Controls.OrbKind.Working);
-                // 도구가 끝나면 모델 추론이 이어지므로 알림을 '사고 중'으로 되돌린다 — 상태가 끊기지 않게
-                Dispatcher.BeginInvoke(new Action(ShowThinkingNotice));
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _assistantToolExecuting = false;
+                    // 도구가 끝나면 모델 추론이 이어진다.
+                    ShowAssistantFace(_assistantStreaming ? Controls.OrbKind.Composing : Controls.OrbKind.Working);
+                    ShowThinkingNotice();
+                }));
             };
             _assistant.Tools = _assistantTools;
 
@@ -245,8 +249,8 @@ namespace TopDock
         {
             base.OnPreviewKeyDown(e);
 
-            // 비서 화면에서는 포커스 위치와 무관하게 Esc로 닫기 (입력창이 먼저 받아도 무방)
-            if (e.Key == Key.Escape && _currentViewMode == ViewMode.Assistant)
+            // 비서 화면/작업 중 아일랜드에서는 포커스 위치와 무관하게 Esc로 취소·닫기
+            if (e.Key == Key.Escape && _currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
             {
                 if (_assistantBusy) _assistantCts?.Cancel();
                 CloseAssistant();

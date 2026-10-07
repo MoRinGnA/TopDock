@@ -47,7 +47,9 @@ namespace TopDock
             _isExpanded = true;
 
 
-            if (_currentViewMode == ViewMode.Assistant) return;
+            // 비서 화면이나 작업 중 아일랜드는 마우스가 스쳐도 크기를 바꾸지 않는다 —
+            // 작업 중에 아일랜드가 커졌다 작아지면 눈과 문구가 계속 튄다.
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
             {
@@ -61,8 +63,8 @@ namespace TopDock
 
         private void Notch_MouseLeave(object sender, MouseEventArgs e)
         {
-            // AI 비서 대화 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
-            if (_currentViewMode == ViewMode.Assistant)
+            // AI 비서 대화 중·작업 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
             {
                 HideVolumeBarExpanded();
                 return;
@@ -219,6 +221,9 @@ namespace TopDock
         private void SwitchViewMode(ViewMode mode)
         {
             _currentViewMode = mode;
+            // 얼굴 애니메이션은 AiFace가 자기 상태와 보이는 여부로 관리한다 —
+            // 여기서 상태를 추측해 켜고 끄면 실제 표정과 어긋난다.
+            AssistantFace.Visibility = mode == ViewMode.Assistant ? Visibility.Visible : Visibility.Collapsed;
 
             // 확장은 여유 있게, 축소는 빠르게 — 모프 방향에 따라 리듬을 다르게 (targetWidth 결정 후 계산)
             Duration duration = new Duration(TimeSpan.FromMilliseconds(450));
@@ -279,13 +284,21 @@ namespace TopDock
                     targetRadius = 32;
                     activeView = NotificationExpandedView;
                     break;
+                case ViewMode.AssistantCompact:
+                    // 작업 중 아일랜드 — 눈만 둔다. 문구가 없으니 아이들 아일랜드와 같은 폭(100)으로 고정,
+                    // 무엇을 하는 중이든 노치가 늘었다 줄지 않는다.
+                    targetWidth = 100;
+                    targetHeight = 38;
+                    targetRadius = 19;
+                    activeView = AssistantCompactView;
+                    break;
                 case ViewMode.Assistant:
-                    // 오브 중심 몰입형 — 무대(오브+상태) · 응답 · 입력 3단
+                    // 얼굴 무대 · 응답 · 입력 3단
                     targetWidth = 460;
                     targetHeight = 336;
                     targetRadius = 34;
                     activeView = AssistantView;
-                    // 헤더 오버레이(오브+상태+버튼)는 본체 뷰와 독립적으로 함께 표시
+                    // 헤더 오버레이(버튼)는 본체 뷰와 독립적으로 함께 표시
                     AssistantHeaderOverlay.IsHitTestVisible = true;
                     AssistantHeaderOverlay.BeginAnimation(UIElement.OpacityProperty,
                         new DoubleAnimation { To = 1, Duration = duration, EasingFunction = ease });
@@ -316,8 +329,10 @@ namespace TopDock
 
             SetViewActive(activeView, duration, ease);
 
-            // 배터리 표시는 뷰에 따라 자리만 바뀐다 — 접힌 아일랜드는 점, 펼치면 퍼센트.
+            // 배터리 점은 접힌/기본 확장 노치에서 같은 자리에 유지한다.
             ApplyBatteryIndicator();
+            // AI 상태 점도 같은 자리 — 비서 화면을 벗어나면 여기서 함께 걷힌다.
+            ApplyAssistantIndicator();
 
             bool expanding = targetWidth > NotchBorder.Width;
             duration = new Duration(TimeSpan.FromMilliseconds(expanding ? 520 : 380));
@@ -342,7 +357,7 @@ namespace TopDock
 
         private void SetViewActive(UIElement activeView, Duration duration, IEasingFunction ease)
         {
-            UIElement[] views = { VolumeHudView, IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView };
+            UIElement[] views = { VolumeHudView, IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView, AssistantCompactView };
             Duration fadeOutDuration = new Duration(TimeSpan.FromMilliseconds(150));
 
             foreach (var view in views)
@@ -372,8 +387,8 @@ namespace TopDock
 
         private void ShowVolumeHud(int volumeVal, bool isMuted)
         {
-            // AI 비서 대화 중에는 볼륨 UI가 대화창에 끼어들지 않게 차단
-            if (_currentViewMode == ViewMode.Assistant)
+            // AI 비서 대화/작업 중에는 볼륨 UI가 얼굴을 가리지 않게 차단
+            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
             {
                 StartHudTimer();
                 return;
