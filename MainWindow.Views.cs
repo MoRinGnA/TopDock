@@ -66,11 +66,11 @@ namespace TopDock
             // AI 비서 대화 중·작업 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
             if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
             {
-                HideVolumeBarExpanded();
+                HideVolumeRingOverlay();
                 return;
             }
             _isExpanded = false;
-            HideVolumeBarExpanded();
+            HideVolumeRingOverlay();
 
             if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
             if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
@@ -86,7 +86,7 @@ namespace TopDock
         {
             float step = 0.02f;
             int newVol = _audioService.StepVolume(e.Delta > 0 ? step : -step, out bool isMuted);
-            ShowVolumeHud(newVol, isMuted);
+            ShowVolumeRing(newVol, isMuted);
             e.Handled = true;
         }
 
@@ -265,12 +265,6 @@ namespace TopDock
                     targetRadius = 30;
                     activeView = MediaExpandedView;
                     break;
-                case ViewMode.VolumeHud:
-                    targetWidth = _isExpanded ? (LyricsExpected ? 748 : 430) : 240;
-                    targetHeight = _isExpanded ? 144 : 38;
-                    targetRadius = _isExpanded ? 30 : 19;
-                    activeView = _isExpanded ? MediaExpandedView : VolumeHudView;
-                    break;
                 case ViewMode.NotificationCompact:
                     // 아이콘(11) + 여백(7) + 좌우 패딩(14×2) + 라벨-제목 간격(10)을 더해 문장이 잘리지 않게
                     targetWidth = Math.Clamp(MeasureTextWidth(NotifCompactAppText.Text, 13.5, FontWeights.Bold) + MeasureTextWidth(NotifCompactTitleText.Text, 13, FontWeights.SemiBold) + 96, 260, 500);
@@ -313,14 +307,10 @@ namespace TopDock
                     new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(150)) });
             }
 
-            // 접힌 상태로 돌아가면 볼륨바 오버레이도 함께 정리한다 (확장 상태에서만 쓰는 UI)
-            if (!_isExpanded && _volumeBarVisible)
+            // 접힌 상태로 돌아가면 볼륨 오버레이도 함께 정리한다 (확장 상태에서만 쓰는 UI)
+            if (!_isExpanded)
             {
-                _volumeBarVisible = false;
-                VolumeBarPanel.BeginAnimation(UIElement.OpacityProperty, null);
-                VolumeBarPanel.Visibility = Visibility.Collapsed;
-                VolumeBarTransform.BeginAnimation(TranslateTransform.YProperty, null);
-                VolumeBarTransform.Y = -10;
+                ResetVolumeOverlays();
             }
 
             // 가사 자리는 폭과 함께 결정된다 — 좌우 정렬과 열 너비를 먼저 맞춰야
@@ -353,11 +343,28 @@ namespace TopDock
             DoubleAnimation mainContainerHeightAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
             Timeline.SetDesiredFrameRate(mainContainerHeightAnim, 60);
             MainContainer.BeginAnimation(FrameworkElement.HeightProperty, mainContainerHeightAnim);
+
+            UpdateBeamInteriorLight();
+        }
+
+        /// <summary>
+        /// 노치 테두리 빛의 '안쪽 물들임·틴트'를 상황에 맞게 켜고 끈다.
+        ///
+        /// 이 빛은 표면 크기에 비례해 세진다 — 작은 알약(100×38)에선 사실상 0이고,
+        /// 확장 카드(260×120, 748×144)에선 최대로 번진다. 그래서 같은 흰 바도
+        /// 확장 상태에서 휠로 볼륨을 만지면 앨범색으로 물들고,
+        /// 접힌 HUD에서 키보드로 만지면 순백으로 보여 자리마다 색이 달라 보였다.
+        /// 볼륨 UI가 떠 있는 동안엔 안쪽 빛을 꺼서 어느 경로로 만져도 바 색이 같게 한다.
+        /// </summary>
+        private void UpdateBeamInteriorLight()
+        {
+            bool volumeUiVisible = _volumeRingOverlayVisible;
+            NotchBeam.InteriorLight = volumeUiVisible ? 0.0 : 1.0;
         }
 
         private void SetViewActive(UIElement activeView, Duration duration, IEasingFunction ease)
         {
-            UIElement[] views = { VolumeHudView, IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView, AssistantCompactView };
+            UIElement[] views = { IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView, AssistantCompactView };
             Duration fadeOutDuration = new Duration(TimeSpan.FromMilliseconds(150));
 
             foreach (var view in views)
@@ -381,11 +388,11 @@ namespace TopDock
         {
             Dispatcher.Invoke(() =>
             {
-                ShowVolumeHud(volume, isMuted);
+                ShowVolumeRing(volume, isMuted);
             });
         }
 
-        private void ShowVolumeHud(int volumeVal, bool isMuted)
+        private void ShowVolumeRing(int volumeVal, bool isMuted)
         {
             // AI 비서 대화/작업 중에는 볼륨 UI가 얼굴을 가리지 않게 차단
             if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
@@ -394,62 +401,53 @@ namespace TopDock
                 return;
             }
 
-            string volStr = isMuted ? "Mute" : $"{volumeVal}%";
-
-            VolumeProgressBar.Value = volumeVal;
-            VolumeText.Text = volStr;
-
-            VolumeBarProgressBar.Value = volumeVal;
-            VolumeBarText.Text = volStr;
-
-            if (_isExpanded)
-            {
-                ShowVolumeBarExpanded();
-            }
-            else
-            {
-                SwitchViewMode(ViewMode.VolumeHud);
-            }
+            // 어느 화면이든 볼륨은 우측 상태 점 자리의 링 하나로 말한다 —
+            // 접힌 노치도 노치 전체가 계기로 바뀌지 않고 모양을 그대로 유지한다(볼륨바 대신 링).
+            VolumeRing.Show(volumeVal, isMuted);
+            ShowVolumeRingOverlay();
+            // 어느 경로(휠·키보드)로 만져도 테두리 빛이 바를 물들이지 않게 한다.
+            UpdateBeamInteriorLight();
             StartHudTimer();
         }
-        private static readonly Duration NotchAnimDuration = new Duration(TimeSpan.FromMilliseconds(450));
-        private static readonly ExponentialEase NotchAnimEase = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
 
         /// <summary>
-        /// 볼륨바는 볼륨을 만지는 동안만 아래에서 올라오는 오버레이다.
-        /// 본체 높이는 건드리지 않는다 — 크기가 바뀌면 테두리 빛이 본체와 어긋나 어색해진다.
-        /// 그래서 본체·빛의 크기는 SwitchViewMode 한 곳에서만 결정된다.
+        /// 펼친 카드의 우측 상태 점 자리에 볼륨 링을 띄운다 — 이 자리는 볼륨의 자리다.
+        /// 진행바 자리를 빌리지 않으므로 재생 위치가 계속 보이고, 카드 높이·내용도 그대로다.
         /// </summary>
-        private void ShowVolumeBarExpanded()
+        private void ShowVolumeRingOverlay()
         {
-            VolumeBarPanel.Visibility = Visibility.Visible;
+            if (_volumeRingOverlayVisible) return;
+            _volumeRingOverlayVisible = true;
 
-            VolumeBarPanel.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation { To = 1, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-
-            VolumeBarTransform.BeginAnimation(TranslateTransform.YProperty,
-                new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
-
-            _volumeBarVisible = true;
+            VolumeRing.Visibility = Visibility.Visible;
+            VolumeRing.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation { To = 1, Duration = new Duration(TimeSpan.FromMilliseconds(160)) });
         }
 
-        private void HideVolumeBarExpanded()
+        private void HideVolumeRingOverlay()
         {
-            if (!_volumeBarVisible) return;
-            _volumeBarVisible = false;
+            if (!_volumeRingOverlayVisible) return;
+            _volumeRingOverlayVisible = false;
 
-            var opacityAnim = new DoubleAnimation { To = 0, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase };
-            opacityAnim.Completed += (s, e) =>
+            var fade = new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(160)) };
+            fade.Completed += (s, e) =>
             {
-                if (!_volumeBarVisible)
-                {
-                    VolumeBarPanel.Visibility = Visibility.Collapsed;
-                }
+                if (_volumeRingOverlayVisible) return;
+                VolumeRing.Visibility = Visibility.Collapsed;
+                UpdateBeamInteriorLight();
             };
-            VolumeBarPanel.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
+            VolumeRing.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
 
-            VolumeBarTransform.BeginAnimation(TranslateTransform.YProperty,
-                new DoubleAnimation { To = -10, Duration = NotchAnimDuration, EasingFunction = NotchAnimEase });
+        /// <summary>접히는 순간엔 애니메이션 없이 즉시 볼륨 링을 정리한다(크기 변화와 겹치면 어긋나 보인다).</summary>
+        private void ResetVolumeOverlays()
+        {
+            _volumeRingOverlayVisible = false;
+            VolumeRing.BeginAnimation(UIElement.OpacityProperty, null);
+            VolumeRing.Opacity = 0;
+            VolumeRing.Visibility = Visibility.Collapsed;
+
+            UpdateBeamInteriorLight();
         }
 
         private void StartHudTimer()
@@ -461,13 +459,13 @@ namespace TopDock
                 {
                     _volumeHudTimer.Stop();
 
-                    if (_isExpanded)
+                    HideVolumeRingOverlay();
+
+                    // 볼륨을 만지는 동안 마우스가 올라와 있었으면 그때 확장 카드로 건네준다
+                    // (만지는 동안엔 크기를 바꾸지 않으므로 여기서 한 번만 바꾼다).
+                    if (NotchBorder.IsMouseOver && _currentViewMode is ViewMode.IdleCompact or ViewMode.MediaCompact)
                     {
-                        HideVolumeBarExpanded();
-                    }
-                    else
-                    {
-                        SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+                        SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
                     }
                 };
             }

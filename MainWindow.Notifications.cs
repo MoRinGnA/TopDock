@@ -106,7 +106,7 @@ namespace TopDock
             BatteryDotGlow.Fill = glow;
             // 접힌 아이들·미디어 노치와 기본 확장에서 같은 점 하나가 보인다 — 뷰마다 다른 자리에
             // 다른 점을 두면 화면을 옮겨 다닐 때마다 눈이 상태 표시를 다시 찾아야 한다.
-            bool showBattery = _currentViewMode is ViewMode.IdleCompact or ViewMode.IdleExpanded or ViewMode.MediaCompact;
+            bool showBattery = _currentViewMode is ViewMode.IdleCompact or ViewMode.IdleExpanded or ViewMode.MediaCompact or ViewMode.MediaExpanded;
             BatteryDot.Visibility = showBattery ? Visibility.Visible : Visibility.Collapsed;
 
             if (!showBattery)

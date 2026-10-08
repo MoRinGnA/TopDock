@@ -180,45 +180,12 @@
             </Setter>
         </Style>
 
-        <Style x:Key="AppleVolumeProgressBar" TargetType="ProgressBar">
-            <Setter Property="Background" Value="#252528"/>
-            <Setter Property="Foreground" Value="#FFFFFF"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ProgressBar">
-                        <Grid x:Name="TemplateRoot">
-                            <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
-                            <Track x:Name="PART_Track">
-                                <Track.DecreaseRepeatButton>
-                                    <RepeatButton Focusable="False">
-                                        <RepeatButton.Template>
-                                            <ControlTemplate TargetType="RepeatButton">
-                                                <Border Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ProgressBar}}" CornerRadius="4"/>
-                                            </ControlTemplate>
-                                        </RepeatButton.Template>
-                                    </RepeatButton>
-                                </Track.DecreaseRepeatButton>
-                                <Track.IncreaseRepeatButton>
-                                    <RepeatButton Focusable="False">
-                                        <RepeatButton.Template>
-                                            <ControlTemplate TargetType="RepeatButton">
-                                                <Border Background="Transparent"/>
-                                            </ControlTemplate>
-                                        </RepeatButton.Template>
-                                    </RepeatButton>
-                                </Track.IncreaseRepeatButton>
-                            </Track>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
       </ResourceDictionary>
     </Window.Resources>
 
-    <!-- Root grid: full screen overlay -->
-    <Grid x:Name="RootGrid">
+    <!-- Root grid: full screen overlay.
+         UseLayoutRounding — 얇은 선(볼륨 바 등)이 반픽셀에 앉아 안티에일리어싱으로 흐려지는 것을 막는다. -->
+    <Grid x:Name="RootGrid" UseLayoutRounding="True">
 
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
@@ -234,25 +201,6 @@
                 <Grid x:Name="OuterContentGrid" ClipToBounds="True">
 
                     <Grid x:Name="MainContainer" ClipToBounds="True" VerticalAlignment="Top" Height="38">
-
-                        <!-- Volume HUD -->
-                        <Grid x:Name="VolumeHudView" Opacity="0" IsHitTestVisible="False"
-                              Margin="14,0,14,0" VerticalAlignment="Center">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Path x:Name="VolumeIcon" Grid.Column="0"
-                                  Data="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
-                                  Fill="#FFFFFF" Width="14" Height="14" Stretch="Uniform" Margin="0,0,10,0" VerticalAlignment="Center"/>
-                            <ProgressBar x:Name="VolumeProgressBar" Grid.Column="1"
-                                         Style="{StaticResource AppleVolumeProgressBar}"
-                                         Height="8" Minimum="0" Maximum="100" Value="50" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="VolumeText" Grid.Column="2" Text="50%"
-                                       Foreground="#E5FFFFFF" FontSize="11" FontWeight="SemiBold"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
-                        </Grid>
 
                         <!-- Idle compact: 얼굴만. 라벨 없이 캐릭터 자체가 아일랜드 -->
                         <Grid x:Name="IdleCompactView" Opacity="0" IsHitTestVisible="False"
@@ -407,10 +355,26 @@
                                              HorizontalAlignment="Center"/>
                         </StackPanel>
 
-                        <!-- Media compact — 오른쪽 여백 34 = 이퀄라이저(약 14) + 상태 점 자리(20).
-                             점 자리는 비워 둔다. 배터리 점도 AI 상태 점도 같은 자리(MainContainer 우측 끝 12px)를 쓴다. -->
+                        <!-- Media compact — 평소엔 좌우 여백이 같아 제목과 이퀄라이저가 대칭으로 앉는다.
+                             상태 점이 나타날 때만 그만큼(20) 이퀄라이저가 왼쪽으로 비켜나 자리를 내준다.
+                             배터리 점도 AI 상태 점도 같은 자리(MainContainer 우측 끝 12px)를 쓴다. -->
                         <Grid x:Name="MediaCompactView" Opacity="0" IsHitTestVisible="False"
-                              Margin="14,0,34,0" VerticalAlignment="Center">
+                              VerticalAlignment="Center">
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Setter Property="Margin" Value="14,0,14,0"/>
+                                    <Style.Triggers>
+                                        <!-- 점이 보이는 동안만(충전 중·배터리 부족) 이퀄라이저를 민다 -->
+                                        <DataTrigger Binding="{Binding Visibility, ElementName=BatteryDot}" Value="Visible">
+                                            <Setter Property="Margin" Value="14,0,34,0"/>
+                                        </DataTrigger>
+                                        <!-- 볼륨을 만질 때 뜨는 링에게도 같은 자리를 내준다 -->
+                                        <DataTrigger Binding="{Binding Visibility, ElementName=VolumeRing}" Value="Visible">
+                                            <Setter Property="Margin" Value="14,0,34,0"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
@@ -535,13 +499,14 @@
                                                      Height="4" VerticalAlignment="Center" IsHitTestVisible="False"
                                                      Minimum="0" Maximum="100" Value="0"/>
                                     </Grid>
-                                    <Grid Grid.Row="1" Margin="0,6,0,0">
+                                    <!-- 시간 줄 -->
+                                    <Grid x:Name="ExpandedTimeRow" Grid.Row="1" Margin="0,6,0,0">
                                         <TextBlock x:Name="CurrentTimeText" Text="0:00"
                                                    Foreground="#8E8E93" FontSize="10" FontWeight="SemiBold"
-                                                   HorizontalAlignment="Left"/>
+                                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
                                         <TextBlock x:Name="TotalTimeText" Text="0:00"
                                                    Foreground="#8E8E93" FontSize="10" FontWeight="SemiBold"
-                                                   HorizontalAlignment="Right"/>
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Grid>
 
@@ -578,33 +543,13 @@
 
                     </Grid>
 
-                    <!-- Volume bar panel (bottom) -->
-                    <!-- 본체 크기는 바꾸지 않고 아래에서 슬라이드로 올라온다.
-                         하단 여백을 최소로 써서 미디어 컨트롤과 겹치지 않게 둔다. -->
-                    <Border x:Name="VolumeBarPanel" Visibility="Collapsed" Opacity="0"
-                            VerticalAlignment="Bottom" Margin="16,6,16,6"
-                            Background="#D9121214" CornerRadius="10" Padding="12,9,12,9">
-                        <Border.RenderTransform>
-                            <TranslateTransform x:Name="VolumeBarTransform" Y="-10"/>
-                        </Border.RenderTransform>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Path x:Name="VolumeBarIcon" Grid.Column="0"
-                                  Data="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
-                                  Fill="#FFFFFF" Width="14" Height="14" Stretch="Uniform"
-                                  Margin="0,0,10,0" VerticalAlignment="Center"/>
-                            <ProgressBar x:Name="VolumeBarProgressBar" Grid.Column="1"
-                                         Style="{StaticResource AppleVolumeProgressBar}"
-                                         Height="6" Minimum="0" Maximum="100" Value="50" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="VolumeBarText" Grid.Column="2" Text="50%"
-                                       Foreground="#E5FFFFFF" FontSize="11" FontWeight="SemiBold"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
+                    <!-- 볼륨 링 — 볼륨을 만지는 동안만 우측 상태 점 자리를 원형 아크가 감싼다.
+                         진행바를 쓰지 않으므로 재생 위치를 가리지 않는다. 상태 점과 같은 중심에 두어
+                         (점 중심 = 오른쪽 18px) 링이 점을 감싸 보이게 한다. -->
+                    <controls:VolumeRing x:Name="VolumeRing" Width="24" Height="24"
+                                         HorizontalAlignment="Right" VerticalAlignment="Center"
+                                         Margin="0,0,6,0"
+                                         Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"/>
 
                     <!-- 공용 상태 점 자리 — 오른쪽 끝에서 12px, 12×12 후광 + 5×5 코어.
                          배터리도 AI도 이 한 자리만 쓴다. 위치가 하나라 화면이 바뀌어도 눈이 옮겨 다니지 않는다.

@@ -12,7 +12,7 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
-        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, VolumeHud, NotificationCompact, NotificationExpanded, Assistant, AssistantCompact }
+        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, NotificationCompact, NotificationExpanded, Assistant, AssistantCompact }
 
         /// <summary>배터리는 퍼센트가 아니라 3분류로만 판단한다.</summary>
         private enum BatteryLevel { Normal, Charging, Low }
@@ -162,7 +162,7 @@ namespace TopDock
         // 가사 싱크 — 뮤직비디오 앞 여백(인트로)만큼 가사를 늦춘다.
         private TimeSpan _lyricOffset = TimeSpan.Zero;
 
-        private bool _volumeBarVisible = false;
+        private bool _volumeRingOverlayVisible = false;
         private bool HasMedia => !string.IsNullOrEmpty(_lastMediaKey);
         private List<LyricLine> _syncedLyrics = new();
         private System.Windows.Forms.NotifyIcon? _trayIcon;
