@@ -68,6 +68,16 @@ namespace TopDock.Controls
         /// <summary>전체 밝기(0~1).</summary>
         public double Strength { get => (double)GetValue(StrengthProperty); set => SetValue(StrengthProperty, value); }
 
+        /// <summary>패널 안쪽으로 번지는 빛(물들임·색 유리 틴트)의 양(0~1).
+        /// 바깥 테두리 빛(림·블룸·혜성)은 그대로 두고 '안쪽만' 끈다.
+        /// 안쪽 빛은 표면 크기에 비례해 커지므로(작은 알약 ≈ 0, 확장 카드 = 최대) 자식 콘텐츠의
+        /// 색을 자리마다 다르게 물들인다 — 볼륨 바처럼 색으로 상태를 말하는 요소는 잠시 끄고 그린다.</summary>
+        public static readonly DependencyProperty InteriorLightProperty = DependencyProperty.Register(
+            nameof(InteriorLight), typeof(double), typeof(BorderBeam),
+            new PropertyMetadata(1.0, (s, e) => ((BorderBeam)s).InvalidateVisual()));
+        /// <summary>0이면 안쪽 물들임·틴트가 완전히 꺼진다 (테두리 빛은 유지).</summary>
+        public double InteriorLight { get => (double)GetValue(InteriorLightProperty); set => SetValue(InteriorLightProperty, value); }
+
         public static readonly DependencyProperty FlashProperty = DependencyProperty.Register(
             nameof(Flash), typeof(double), typeof(BorderBeam),
             new PropertyMetadata(0.0, (s, e) => ((BorderBeam)s).InvalidateVisual()));
@@ -274,11 +284,13 @@ namespace TopDock.Controls
             // 밒의 굵기·블룸·헤드를 표면 크기에 비례해 키워 존재감을 유지한다.
             double lightScale = Math.Clamp(Math.Sqrt(w * h) / 65.0, 1.0, 3.2);
             double gain = Math.Sqrt(lightScale); // 굵기·헤드는 완만하게(과하면 뭉개진다)
+            // 안쪽 빛 스위치 — 색으로 상태를 말하는 콘텐츠(볼륨 바 등)가 떠 있는 동안엔 끈다.
+            double interior = Math.Clamp(InteriorLight, 0, 1);
             // 안쪽 물들임 — 빛이 패널 안으로 번진다. 작은 알약(lightScale 1.0)에서도
             // 약간은 번져야 혜성이 테두리 위의 선이 아니라 '공간을 채운 빛'으로 읽힌다.
-            double wash = Math.Clamp((lightScale - 0.9) * 0.17, 0, 0.24);
-            // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곱의 색을 띤다
-            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) : 0.0;
+            double wash = Math.Clamp((lightScale - 0.9) * 0.17, 0, 0.24) * interior;
+            // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곡의 색을 띤다
+            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) * interior : 0.0;
 
             // 크기 보정 — 작은 알약은 둘레가 짧아 같은 비율의 꼬리도 알약을 거의 다 감싼다.
             // 그래서 작은 노치에선 꼬리를 줄이고, 큰 노치에선 굵기를 낮춰 둔다.

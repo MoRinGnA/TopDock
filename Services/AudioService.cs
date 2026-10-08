@@ -306,6 +306,15 @@ namespace TopDock.Services
                 _audioVolume.SetMasterVolumeLevelScalar(newLevel, ref empty);
                 _audioVolume.GetMute(out isMuted);
 
+                // 키보드 볼륨 키(윈도우 셸)는 볼륨을 "올리면" 음소거를 함께 해제한다.
+                // 휠만 그걸 하지 않으면 같은 볼륨인데도 한쪽은 회색(음소거), 한쪽은 흰색으로 보인다.
+                // 두 경로의 바 색이 갈라지지 않게 윈도우와 같은 규칙을 따른다.
+                if (deltaScalar > 0f && isMuted)
+                {
+                    _audioVolume.SetMute(false, ref empty);
+                    _audioVolume.GetMute(out isMuted);
+                }
+
                 int vol = (int)Math.Round(newLevel * 100);
                 _lastVolume = vol;
                 _lastMuted = isMuted;

@@ -4,16 +4,8 @@
     <!-- 어떤 크기로 놓아도 비율이 유지되도록 Viewbox 래핑 -->
     <Viewbox Stretch="Uniform">
         <Grid Width="40" Height="26" Background="Transparent">
-            <!-- 얼굴 뒤 은은한 오로라 -->
-            <Ellipse x:Name="Halo" Width="38" Height="24" VerticalAlignment="Center" Opacity="0.5">
-                <Ellipse.Fill>
-                    <RadialGradientBrush>
-                        <GradientStop Color="#738B5CF6" Offset="0"/>
-                        <GradientStop Color="#4022D3EE" Offset="0.65"/>
-                        <GradientStop Color="#0022D3EE" Offset="1"/>
-                    </RadialGradientBrush>
-                </Ellipse.Fill>
-            </Ellipse>
+            <!-- 눈만 남긴다 — 얼굴에 색(후광·오로라)을 얹으면 눈 주위로 색이 번져 보인다(피드백).
+                 상태를 말하는 색은 오른쪽 끝 상태 점 하나뿐이다. -->
 
             <!-- 두 눈: 민무늬 흰 알약. 눈동자를 넣거나 기울이면 무섭게 읽혀서 넣지 않는다.
                  깜빡임(ScaleY) + 시선(Translate) + 발화 박자(ScaleY)만 쓴다. -->

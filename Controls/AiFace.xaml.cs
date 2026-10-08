@@ -8,7 +8,7 @@ using System.Windows.Threading;
 namespace TopDock.Controls
 {
     /// <summary>
-    /// AI 비서 얼굴. 민무늬 흰 눈 두 개가 전부다.
+    /// AI 비서 얼굴. 민무늬 흰 눈 두 개가 전부다 — 얼굴에는 색을 쓰지 않는다(후광도 없다).
     /// Idle     : 보통 크기, 깜빡임 + 시선 이동 + 은은한 호흡
     /// Thinking : 조금 가늘게 뜨고 시선을 위로, 얼굴이 미세하게 흔들림
     /// Alert    : 눈을 크게 뜬 집중(도구 실행) 표정
@@ -121,9 +121,6 @@ namespace TopDock.Controls
             {
                 eye.BeginAnimation(HeightProperty, new DoubleAnimation(height, sizeTime) { EasingFunction = ease });
             }
-
-            Halo.BeginAnimation(OpacityProperty,
-                new DoubleAnimation(_state == FaceState.Thinking ? 0.85 : 0.5, TimeSpan.FromMilliseconds(400)));
 
             // 발화 펄스도 눈 바운스를 쓰므로, 바운스 정리는 먼저 끝낸다
             EyesBounce.BeginAnimation(TranslateTransform.YProperty, null);
@@ -238,7 +235,7 @@ namespace TopDock.Controls
         {
             if (_state != FaceState.Idle || !IsVisible || _breathStoryboard != null) return;
 
-            // 작은 크기에서도 살아 있는 느낌만 나도록, 눈 너비와 후광을 천천히 함께 호흡시킨다.
+            // 작은 크기에서도 살아 있는 느낌만 나도록 눈 너비를 천천히 호흡시킨다.
             var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
             var leftEye = new DoubleAnimation(1.0, 1.035, TimeSpan.FromSeconds(1.35))
             {
@@ -247,27 +244,18 @@ namespace TopDock.Controls
                 EasingFunction = ease,
             };
             var rightEye = leftEye.Clone();
-            var halo = new DoubleAnimation(0.40, 0.60, TimeSpan.FromSeconds(1.7))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease,
-            };
 
             _breathStoryboard = new Storyboard();
             Storyboard.SetTarget(leftEye, LeftBlink);
             Storyboard.SetTargetProperty(leftEye, new PropertyPath(ScaleTransform.ScaleXProperty));
             Storyboard.SetTarget(rightEye, RightBlink);
             Storyboard.SetTargetProperty(rightEye, new PropertyPath(ScaleTransform.ScaleXProperty));
-            Storyboard.SetTarget(halo, Halo);
-            Storyboard.SetTargetProperty(halo, new PropertyPath(UIElement.OpacityProperty));
             _breathStoryboard.Children.Add(leftEye);
             _breathStoryboard.Children.Add(rightEye);
-            _breathStoryboard.Children.Add(halo);
             _breathStoryboard.Begin();
         }
 
-        /// <summary>호흡만 걷어낸다. 후광 페이드는 건드리지 않는다 — 방금 건 표정 페이드를 취소하게 된다.</summary>
+        /// <summary>호흡만 걷어낸다 — 방금 건 표정 애니메이션은 취소하지 않는다.</summary>
         private void StopBreathing()
         {
             _breathStoryboard?.Stop();
