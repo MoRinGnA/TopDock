@@ -14,6 +14,25 @@
     <Using Remove="System.Drawing" />
 </ItemGroup>
 
+<!-- 도크 모양 전환의 결정은 UI를 모르는 순수 로직(TopDock.Logic)이 맡는다. 창 코드 곳곳이
+     ViewMode·DockState를 쓰므로 전역 using으로 한 번만 선언한다. -->
+<ItemGroup>
+    <Using Include="TopDock.Logic" />
+</ItemGroup>
+
+<ItemGroup>
+    <ProjectReference Include="TopDock.Logic/TopDock.Logic.csproj" />
+</ItemGroup>
+
+<!-- 순수 로직과 테스트는 각자 프로젝트다. 앱의 기본 컴파일 글롭(**/*.cs)이 그 소스까지
+     끌어오면 같은 이름이 두 번 정의돼 빌드가 깨지므로 여기서 명시적으로 빼낸다. -->
+<ItemGroup>
+    <Compile Remove="TopDock.Logic/**" />
+    <Compile Remove="tests/**" />
+    <None Remove="TopDock.Logic/**" />
+    <None Remove="tests/**" />
+</ItemGroup>
+
 <!-- Pretendard (SIL OFL 1.1, Fonts/LICENSE.txt) — UI 글꼴. NuGet이 아니라
      리소스라, 기본 글롭에 안 잡히므로 직접 넣어 준다. OTF(CFF)가 TTF보다
      가볍고(4종 6.3MB vs 10.7MB) WPF가 네 굵기를 모두 인식한다. -->

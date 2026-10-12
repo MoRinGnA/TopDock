@@ -7,6 +7,9 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
+        /// <summary>트레이 메뉴의 알림 기록 항목 — 안 읽은 개수를 여기에 붙인다.</summary>
+        private System.Windows.Forms.ToolStripMenuItem? _trayInboxItem;
+
         private void InitializeTrayIcon()
         {
             _trayIcon = new System.Windows.Forms.NotifyIcon
@@ -23,6 +26,10 @@ namespace TopDock
             });
 
             contextMenu.Items.Add("설정", null, (s, e) => OpenSettings());
+
+            _trayInboxItem = new System.Windows.Forms.ToolStripMenuItem("알림 기록", null,
+                (s, e) => Dispatcher.Invoke(OpenNotificationInbox));
+            contextMenu.Items.Add(_trayInboxItem);
 
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             contextMenu.Items.Add("종료", null, (s, e) => TrayExit_Click());
@@ -78,6 +85,16 @@ namespace TopDock
             {
                 _batteryService.ForceUpdate();
             }
+        }
+
+        /// <summary>
+        /// 트레이 메뉴에 안 읽은 개수를 붙인다 — 지나간 알림이 있다는 사실을 노치를 보지 않고도
+        /// 알 수 있는 자리는 여기뿐이다(노치에 배지를 하나 더 얹으면 화면이 시끄러워진다).
+        /// </summary>
+        private void UpdateTrayInboxLabel()
+        {
+            if (_trayInboxItem == null) return;
+            _trayInboxItem.Text = _inbox.Unread > 0 ? $"알림 기록 ({_inbox.Unread})" : "알림 기록";
         }
 
         private void TrayExit_Click()

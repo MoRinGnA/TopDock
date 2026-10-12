@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -6,11 +6,15 @@ using System.Windows.Media.Animation;
 namespace TopDock.Controls
 {
     /// <summary>
-    /// 볼륨 계기 — 바 대신 우측 상태 점 자리를 감싸는 원형 아크다.
+    /// 볼륨 계기 — 바 대신 우측 상태 점 자리를 감싸는 원형 아크다. 그 안에는 지금 나는 소리의
+    /// 세 칸(저·중·고)이 산다.
     ///
     /// 노치의 "살아있는 가장자리(BorderBeam)"와 같은 언어를 약하게 빌린다:
     /// 꼬리(시작)는 흐리고 헤드(끝)로 갈수록 밝아지는 그라데이션, 뒤로 번지는 은은한 블룸,
     /// 끝점에 맺히는 작은 빛. 그래서 텅 빈 회색 고리가 아니라 '빛이 차오르는' 링으로 읽힌다.
+    ///
+    /// 호는 볼륨을, 안쪽 바늘은 소리를 말한다 — 두 계기가 한 자리에 겹쳐 있어도 서로 다른 것을
+    /// 가리키므로 섞이지 않는다: 호는 흰색(내가 정한 값), 바늘은 곡의 색(지금 나는 소리).
     ///
     /// 진행바 자리를 빌리지 않으므로 재생 위치가 계속 보이고, 접힌 노치든 펼친 카드든
     /// 같은 자리·같은 모양이라 화면이 바뀌어도 눈이 옮겨 다니지 않는다.
@@ -18,13 +22,16 @@ namespace TopDock.Controls
     /// </summary>
     public class VolumeRing : FrameworkElement
     {
-        private const double Thickness = 2.0;
-        private const double Diameter = 24.0;
+        private const double Thickness = Tokens.RingThickness;
+        private const double Diameter = Tokens.RingDiameter;
         private static readonly Duration Glide = new(TimeSpan.FromMilliseconds(140));
 
         private static readonly Color FillColor = Color.FromRgb(0xFF, 0xFF, 0xFF);
         private static readonly Color MutedColor = Color.FromRgb(0x8E, 0x8E, 0x93);
         private static readonly Color TrackColor = Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF);
+        private static readonly Color BarIdleColor = Color.FromRgb(0xF0, 0xF3, 0xF8);
+
+        private readonly float[] _bars = new float[Tokens.RingBarCount];
 
         /// <summary>호가 채워지는 비율(0~100). 애니메이션이 이 값을 미끄러뜨리면 아크가 따라 그려진다.</summary>
         public static readonly DependencyProperty LevelProperty = DependencyProperty.Register(
@@ -39,6 +46,23 @@ namespace TopDock.Controls
             new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
         public bool IsMuted { get => (bool)GetValue(IsMutedProperty); set => SetValue(IsMutedProperty, value); }
+
+        /// <summary>바늘 색 — 재생 중인 곡의 색(테두리 빛과 같은 색)을 창이 끼워 준다.</summary>
+        public static readonly DependencyProperty BarsBrushProperty = DependencyProperty.Register(
+            nameof(BarsBrush), typeof(Brush), typeof(VolumeRing),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+        public Brush? BarsBrush { get => (Brush?)GetValue(BarsBrushProperty); set => SetValue(BarsBrushProperty, value); }
+
+        /// <summary>
+        /// 바늘을 보일지. 창이 정한다 — 상태 점(배터리·AI·복사)이 자리를 쓰면 계기는 비켜선다.
+        /// 호는 그대로 남는다: 자리를 양보하는 것은 바늘뿐이다.
+        /// </summary>
+        public static readonly DependencyProperty BarsVisibleProperty = DependencyProperty.Register(
+            nameof(BarsVisible), typeof(bool), typeof(VolumeRing),
+            new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
+
+        public bool BarsVisible { get => (bool)GetValue(BarsVisibleProperty); set => SetValue(BarsVisibleProperty, value); }
 
         public VolumeRing()
         {
@@ -64,9 +88,18 @@ namespace TopDock.Controls
                 {
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
                 };
-                Timeline.SetDesiredFrameRate(glide, 60);
+                Timeline.SetDesiredFrameRate(glide, Tokens.FrameRate);
                 BeginAnimation(LevelProperty, glide);
             }
+        }
+
+        /// <summary>세 칸의 높이(0~1)를 받는다. 다듬는 일(어택·릴리즈)은 이미 캡처 쪽에서 끝났다.</summary>
+        public void SetBars(float low, float mid, float high)
+        {
+            _bars[0] = low;
+            _bars[1] = mid;
+            _bars[2] = high;
+            InvalidateVisual();
         }
 
         protected override void OnRender(DrawingContext dc)
@@ -84,8 +117,17 @@ namespace TopDock.Controls
             // 트랙 — 볼륨이 0이어도 고리의 나머지가 보이게 어둑하게 전체를 긋는다
             dc.DrawEllipse(null, MakePen(TrackColor, Thickness, false), new Point(cx, cy), radius, radius);
 
-            if (pct <= 0.0005) return;
+            if (pct > 0.0005)
+            {
+                DrawArc(dc, cx, cy, radius, accent, pct);
+            }
 
+            // 바늘은 호보다 나중에 그린다 — 호가 바늘을 가로지르면 계기가 아니라 장식이 된다
+            if (BarsVisible) DrawBars(dc, cx, cy);
+        }
+
+        private void DrawArc(DrawingContext dc, double cx, double cy, double radius, Color accent, double pct)
+        {
             // 완전한 원(360°)은 시작=끝이라 이어 그리면 안 된다 — 아주 살짝 남긴다.
             double sweep = Math.Min(359.0, 360.0 * pct);
             int segments = Math.Max(12, (int)Math.Ceiling(sweep / 2.4)); // ≈2.4° 간격
@@ -124,6 +166,34 @@ namespace TopDock.Controls
                 WithAlpha(accent, 0));
             glow.Freeze();
             dc.DrawEllipse(glow, null, tip, glowRadius, glowRadius);
+        }
+
+        /// <summary>
+        /// 링 안의 세 칸. 바닥을 공통으로 두고 위로 자란다 — 이퀄라이저의 문법이다.
+        /// 조용해도 바닥 높이만큼은 남겨 '꺼진 계기'가 아니라 '쉬는 계기'로 보이게 한다.
+        /// </summary>
+        private void DrawBars(DrawingContext dc, double cx, double cy)
+        {
+            double barWidth = Tokens.RingBarWidth;
+            double totalWidth = barWidth * Tokens.RingBarCount + Tokens.RingBarGap * (Tokens.RingBarCount - 1);
+            double left = cx - totalWidth / 2;
+            double bottom = cy + Tokens.RingBarMaxHeight / 2;
+
+            Color color = IsMuted ? MutedColor : BarsBrush is SolidColorBrush solid ? solid.Color : BarIdleColor;
+
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+
+            for (int i = 0; i < _bars.Length; i++)
+            {
+                double level = IsMuted ? 0.0 : Math.Clamp(_bars[i], 0f, 1f);
+                double height = Tokens.RingBarMinHeight + level * (Tokens.RingBarMaxHeight - Tokens.RingBarMinHeight);
+                double x = left + i * (barWidth + Tokens.RingBarGap);
+
+                dc.DrawRoundedRectangle(brush, null,
+                    new Rect(x, bottom - height, barWidth, height),
+                    barWidth / 2, barWidth / 2);
+            }
         }
 
         private static Point PointOn(double cx, double cy, double r, double degrees)

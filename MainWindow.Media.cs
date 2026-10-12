@@ -51,10 +51,9 @@ namespace TopDock
                     // 끝날 때까지(최악 수십 초) 이전 크기로 남았다.
                     // 가사를 찾는 동안에도 자리는 미리 내준다 — 나중에 폭이 자라면 그게 더 눈에 띈다.
                     _lyricsPending = true;
-                    if (_volumeHudTimer == null || !_volumeHudTimer.IsEnabled)
-                    {
-                        SwitchViewMode(_isExpanded ? ViewMode.MediaExpanded : ViewMode.MediaCompact);
-                    }
+                    // 새 곡이 도착했으니 미디어 모양으로. 같은 모양이어도 다시 그린다 — 곡마다
+                    // 가사 자리가 생기고 사라져 카드 폭이 달라진다(찾는 동안에도 자리를 미리 내준다).
+                    if (!Signals.VolumeHudActive) ApplyMode(_dock.Resolve(Signals), redraw: true);
 
                     string searchArtist = displayArtist == "YouTube" ? string.Empty : displayArtist;
                     _ = LoadLyricsAsync(displayTitle, searchArtist);
@@ -183,17 +182,46 @@ namespace TopDock
             if (isPlaying)
             {
                 _progressTimer.Start();
-                StartEqualizerAnimation();
                 PlayPauseIcon.Data = Geometry.Parse("M6 19h4V5H6v14zm8-14v14h4V5h-4z");
             }
             else
             {
                 _progressTimer.Stop();
-                StopEqualizerAnimation();
                 PlayPauseIcon.Data = Geometry.Parse("M8 5v14l11-7z");
             }
 
+            SetMediaPlaying(isPlaying);
             UpdateBeamState();
+        }
+
+        /// <summary>
+        /// 소리 계기를 재생과 함께 살리고 재생과 함께 잠재운다.
+        ///
+        /// 재생이 멈춘 뒤에도 바늘이 살아 있으면 고장으로 보이고, 멈춘 화면을 위해 계속
+        /// 시스템 소리를 훑고 있을 이유도 없다 — 그래서 바늘의 수명은 재생의 수명과 같다.
+        /// 링은 여기서 사라지지 않는다: 볼륨을 만지는 동안은 여전히 떠 있어야 한다(링의 수명은 따로다).
+        /// </summary>
+        private void SetMediaPlaying(bool playing)
+        {
+            if (_mediaPlaying == playing) return;
+            _mediaPlaying = playing;
+
+            if (playing)
+            {
+                _audioCapture.Start();
+                _audioBarsTimer.Start();
+            }
+            else
+            {
+                _audioBarsTimer.Stop();
+                _audioCapture.Stop();
+
+                // 바늘을 즉시 바닥에 놓는다 — 멈춘 곡의 마지막 소리가 바가에 남아 있으면 안 된다
+                VolumeRing.BarsVisible = false;
+                VolumeRing.SetBars(0, 0, 0);
+            }
+
+            SyncAudioRing(animate: true);
         }
 
         private static readonly TimeSpan LyricLookahead = TimeSpan.FromMilliseconds(500);
@@ -518,8 +546,8 @@ namespace TopDock
                 Duration = TimeSpan.FromMilliseconds(300),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
-            Timeline.SetDesiredFrameRate(fade, 60);
-            Timeline.SetDesiredFrameRate(slide, 60);
+            Timeline.SetDesiredFrameRate(fade, Tokens.FrameRate);
+            Timeline.SetDesiredFrameRate(slide, Tokens.FrameRate);
 
             text.BeginAnimation(UIElement.OpacityProperty, fade);
             transform.BeginAnimation(TranslateTransform.YProperty, slide);
@@ -557,7 +585,7 @@ namespace TopDock
             ExpandedArtistText.Text = string.Empty;
             ExpandedAlbumArtImage.Source = null;
             ExpandedDefaultIcon.Visibility = Visibility.Visible;
-            StopEqualizerAnimation();
+            SetMediaPlaying(false);
 
             _syncedLyrics.Clear();
             _lyricsPending = false;
@@ -570,66 +598,16 @@ namespace TopDock
             TotalTimeText.Text = "0:00";
             _progressTimer.Stop();
 
-            if (_volumeHudTimer == null || !_volumeHudTimer.IsEnabled)
-            {
-                SwitchViewMode(_isExpanded ? ViewMode.IdleExpanded : ViewMode.IdleCompact);
-            }
+            // 미디어가 사라졌으니 아이들 모양으로 — 볼륨 HUD가 떠 있으면 그쪽이 끝날 때 반영한다
+            SyncViewMode();
         }
 
-        /// <summary>이퀄라이저 바 색을 현재 곡의 색으로 맞춘다 (테두리 빛과 동일한 색).</summary>
-        private void UpdateEqualizerAccent(Color color)
+        /// <summary>링 안의 바늘 색을 현재 곡의 색으로 맞춘다 (테두리 빛과 동일한 색).</summary>
+        private void UpdateAudioBarsAccent(Color color)
         {
-            if (_equalizerAccent == color) return;
-            _equalizerAccent = color;
-            _equalizerBrush.Color = color;   // 이미 붙어 있는 브러시 색만 바꾼다 (재할당 없음)
-        }
-
-        private void StartEqualizerAnimation()
-        {
-            StopEqualizerAnimation();
-
-            _eqStoryboard = new Storyboard();
-
-            var anim1 = new DoubleAnimation(4, 13, TimeSpan.FromMilliseconds(380))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever
-            };
-            Storyboard.SetTarget(anim1, EqBar1);
-            Storyboard.SetTargetProperty(anim1, new PropertyPath(Border.HeightProperty));
-
-            var anim2 = new DoubleAnimation(14, 5, TimeSpan.FromMilliseconds(460))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever
-            };
-            Storyboard.SetTarget(anim2, EqBar2);
-            Storyboard.SetTargetProperty(anim2, new PropertyPath(Border.HeightProperty));
-
-            var anim3 = new DoubleAnimation(6, 12, TimeSpan.FromMilliseconds(330))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever
-            };
-            Storyboard.SetTarget(anim3, EqBar3);
-            Storyboard.SetTargetProperty(anim3, new PropertyPath(Border.HeightProperty));
-
-            _eqStoryboard.Children.Add(anim1);
-            _eqStoryboard.Children.Add(anim2);
-            _eqStoryboard.Children.Add(anim3);
-            _eqStoryboard.Begin();
-        }
-
-        private void StopEqualizerAnimation()
-        {
-            if (_eqStoryboard != null)
-            {
-                _eqStoryboard.Stop();
-                _eqStoryboard = null;
-            }
-            EqBar1.Height = 3;
-            EqBar2.Height = 3;
-            EqBar3.Height = 3;
+            if (_audioBarsAccent == color) return;
+            _audioBarsAccent = color;
+            _audioBarsBrush.Color = color;   // 이미 붙어 있는 브러시 색만 바꾼다 (재할당 없음)
         }
 
         private async void PrevButton_Click(object sender, RoutedEventArgs e)

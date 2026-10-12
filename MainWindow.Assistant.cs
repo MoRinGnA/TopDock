@@ -62,7 +62,8 @@ namespace TopDock
         {
             _isExpanded = false;
             AssistantInputBox.Clear();
-            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+            // 볼륨 HUD가 떠 있어도 미루지 않는다 — 사용자가 닫으라고 했으면 화면은 그 자리에서 닫힌다
+            ApplyMode(_dock.Resolve(Signals));
         }
 
         private void ActivateSelfAndFocusInput()
@@ -298,10 +299,11 @@ namespace TopDock
         // AI 상태를 말하는 것은 점 하나다 — 배터리 점과 같은 자리(오른쪽 끝 12px), 같은 크기(12×12 후광 + 5×5 코어).
         // 색이 상태를, 숨쉬는 빛이 진행 중을, 고정된 초록이 완료를 말한다. 글씨는 쓰지 않는다.
 
-        private static readonly Color AssistantThinkingColor = Color.FromRgb(0xB6, 0x9C, 0xFF);  // 생각
-        private static readonly Color AssistantToolColor = Color.FromRgb(0xFF, 0xB8, 0x6B);      // 실행
-        private static readonly Color AssistantReplyColor = Color.FromRgb(0x76, 0xD7, 0xFF);     // 응답
-        private static readonly Color AssistantDoneColor = Color.FromRgb(0x30, 0xD1, 0x58);      // 완료
+        // 상태 점의 색도 한 곳(DesignTokens)에서 온다 — XAML 기본값과 겹쳐 적지 않는다.
+        private static readonly Color AssistantThinkingColor = DesignTokens.AiThinkingColor;  // 생각
+        private static readonly Color AssistantToolColor = DesignTokens.AiToolColor;          // 실행
+        private static readonly Color AssistantReplyColor = DesignTokens.AiReplyColor;        // 응답
+        private static readonly Color AssistantDoneColor = DesignTokens.AiDoneColor;          // 완료
 
         private Controls.OrbKind? _assistantIndicatorKind;   // 마지막으로 표시한 단계
         private bool _assistantDoneShowing;                  // 완료 점이 떠 있는 동안
@@ -402,7 +404,7 @@ namespace TopDock
             if (_currentViewMode != ViewMode.AssistantCompact) return;
             _assistantDoneShowing = false;   // 완료 점은 여기서 끝난다 (뷰 전환이 점도 함께 걷는다)
             _isExpanded = false;   // 접힌 상태로 돌아간다 (마우스가 올라가 있어도)
-            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+            ApplyMode(_dock.Resolve(Signals));
         }
 
         // ── AI 얼굴·상태 표시 전환 ──

@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:TopDock.Controls"
+        xmlns:local="clr-namespace:TopDock"
         Title="TopDock Dynamic Island"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -218,28 +219,62 @@
                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Grid>
 
-                        <!-- Notification Compact — 라벨은 출처별 아이콘+색으로, 제목은 문장으로 -->
+                        <!-- Notification Compact — 누가 보냈는지(칩+이름)는 작게, 할 말(제목)은 크게.
+                             예전에는 앱 이름이 제목보다 컸다: 읽어야 할 문장이 뒤로 밀려 있었다. -->
                         <Grid x:Name="NotificationCompactView" Opacity="0" IsHitTestVisible="False"
                               Margin="14,0,14,0" VerticalAlignment="Center">
+                            <Grid.RenderTransform>
+                                <TransformGroup>
+                                    <ScaleTransform x:Name="NotifCompactScale" ScaleX="1" ScaleY="1"/>
+                                    <TranslateTransform x:Name="NotifCompactSlide" Y="0"/>
+                                </TransformGroup>
+                            </Grid.RenderTransform>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
+                            <!-- Windows 알림은 앱 타일(첫 글자), AI·도구 상태는 글리프 — 같은 자리를 나눠 쓴다 -->
+                            <Border x:Name="NotifCompactChip" Grid.Column="0"
+                                    Width="{x:Static local:DesignTokens.TileSizeCompact}"
+                                    Height="{x:Static local:DesignTokens.TileSizeCompact}"
+                                    CornerRadius="{x:Static local:DesignTokens.TileRadiusCompact}"
+                                    Background="{x:Static local:DesignTokens.AccentInfo}"
+                                    VerticalAlignment="Center" Margin="0,-2,8,0">
+                                <TextBlock x:Name="NotifCompactChipText" Text=""
+                                           Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                           FontSize="{x:Static local:DesignTokens.FontMarkCompact}"
+                                           FontWeight="{x:Static local:DesignTokens.WeightBold}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Margin="0,-1,0,0"/>
+                            </Border>
                             <Path x:Name="NotifCompactIcon" Grid.Column="0"
-                                  Width="11" Height="11" Stretch="Uniform" Fill="#0A84FF"
-                                  VerticalAlignment="Center" Margin="0,-2,7,0"/>
+                                  Width="11" Height="11" Stretch="Uniform"
+                                  Fill="{x:Static local:DesignTokens.AccentInfo}"
+                                  VerticalAlignment="Center" Margin="0,-2,8,0" Visibility="Collapsed"/>
                             <TextBlock x:Name="NotifCompactAppText" Grid.Column="1" Text="App"
-                                       Foreground="#0A84FF" FontSize="13.5" FontWeight="Bold"
-                                       VerticalAlignment="Center" Margin="0,-2,10,0"/>
+                                       Foreground="{x:Static local:DesignTokens.AccentInfo}"
+                                       FontSize="{x:Static local:DesignTokens.FontKicker}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                       VerticalAlignment="Center" Margin="0,-2,9,0"/>
                             <TextBlock x:Name="NotifCompactTitleText" Grid.Column="2" Text="Message"
-                                       Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                       FontSize="{x:Static local:DesignTokens.FontTitleCompact}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
                                        VerticalAlignment="Center" Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
                         </Grid>
 
-                        <!-- AI 비서: 눈·입 표정과 상태 컬러를 함께 보여준다. -->
+                        <!-- AI 비서: 눈·입 표정과 상태 컬러를 함께 보여준다.
+                             내용(얼굴·응답·입력)도 알림 카드와 같은 손짓으로 앉는다 — 상자가 자리를
+                             만들고 조금 뒤에 미끄러져 들어온다(90ms). -->
                         <Grid x:Name="AssistantView" Opacity="0" IsHitTestVisible="False"
                               Margin="18,12,18,12">
+                            <Grid.RenderTransform>
+                                <TransformGroup>
+                                    <ScaleTransform x:Name="AssistantContentScale" ScaleX="1" ScaleY="1"/>
+                                    <TranslateTransform x:Name="AssistantContentSlide" Y="0"/>
+                                </TransformGroup>
+                            </Grid.RenderTransform>
                             <!-- 비네트 — 중앙은 아주 옅게 밝고 가장자리는 살짝 가라앉아 공간감을 준다.
                                  클립이 사각이라 노치 밖으로 새지 않는다. -->
                             <Grid.Background>
@@ -264,8 +299,13 @@
                             <ScrollViewer Grid.Row="1" x:Name="AssistantScroll" MaxHeight="104"
                                           VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
                                           Margin="22,8,58,0">
+                                <!-- 읽을 것은 알림 본문과 같은 리듬(13 / 줄높이 19) — 줄이 촘촘하면 긴 답이 뭉텅이로 보인다 -->
                                 <TextBlock x:Name="AssistantLatestResponseText" Text=""
-                                           Foreground="#E8FFFFFF" FontSize="13" FontWeight="Medium"
+                                           Foreground="{x:Static local:DesignTokens.InkBodyBright}"
+                                           FontSize="{x:Static local:DesignTokens.FontBody}"
+                                           FontWeight="{x:Static local:DesignTokens.WeightMedium}"
+                                           LineHeight="{x:Static local:DesignTokens.LineBody}"
+                                           LineStackingStrategy="BlockLineHeight"
                                            TextWrapping="Wrap"/>
                             </ScrollViewer>
 
@@ -277,12 +317,15 @@
                                     <Grid>
                                         <TextBox x:Name="AssistantInputBox"
                                                  Background="Transparent" BorderThickness="0" Foreground="#FFFFFF"
-                                                 CaretBrush="#0A84FF" FontSize="13" FontWeight="Medium"
+                                                 CaretBrush="{x:Static local:DesignTokens.AccentInfo}"
+                                                 FontSize="{x:Static local:DesignTokens.FontBody}"
+                                                 FontWeight="{x:Static local:DesignTokens.WeightMedium}"
                                                  VerticalContentAlignment="Center"
                                                  KeyDown="AssistantInput_KeyDown"/>
                                         <!-- WPF TextBox엔 플레이스홀더가 없다 — 겹쳐 두고 비었을 때만 보인다 -->
-                                        <TextBlock Text="지시…" Foreground="#5C5C63"
-                                                   FontSize="13" FontWeight="Medium"
+                                        <TextBlock Text="지시…" Foreground="{x:Static local:DesignTokens.InkFaint}"
+                                                   FontSize="{x:Static local:DesignTokens.FontBody}"
+                                                   FontWeight="{x:Static local:DesignTokens.WeightMedium}"
                                                    VerticalAlignment="Center" Margin="1,0,0,0"
                                                    IsHitTestVisible="False">
                                             <TextBlock.Style>
@@ -313,39 +356,177 @@
                                             Width="22" Height="22" Margin="0,0,2,0"
                                             Click="AssistantAiButton_Click" ToolTip="새 지시">
                                         <Path Data="M1 4 L1 10 L7 10 M3.51 15a9 9 0 1 0 2.13 -9.36L1 10"
-                                              Stroke="#A8A8AD" StrokeThickness="2.6"
+                                              Stroke="{x:Static local:DesignTokens.IconMuted}" StrokeThickness="2.6"
                                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                               Width="10" Height="10" Stretch="Uniform"/>
                                     </Button>
                                     <Button x:Name="AssistantCloseButton" Style="{StaticResource GhostIconButton}"
                                             Width="22" Height="22"
-                                            Click="AssistantCloseButton_Click" ToolTip="닫기 (Esc)">
-                                        <Path Data="M18 6L6 18M6 6l12 12"
-                                              Stroke="#A8A8AD" StrokeThickness="2.6"
+                                            Click="AssistantCloseButton_Click" ToolTip="닫기 (Esc)">                                        <Path Data="M18 6L6 18M6 6l12 12"
+                                              Stroke="{x:Static local:DesignTokens.IconMuted}" StrokeThickness="2.6"
                                               StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                               Width="10" Height="10" Stretch="Uniform"/>
-                                    </Button>
-                        </StackPanel>
+                                        </Button>
+                                </StackPanel>
 
-                        <!-- Notification Expanded -->
+                        <!-- Notification Expanded — 앱 타일·제목·본문의 리듬을 고정해 길이에 상관없이
+                             같은 자리에 앉는다. 폭도 고정한다: 폭이 내용을 따라가면 긴 본문이
+                             줄바꿈되지 않고 카드 밖으로 잘려 나간다. -->
                         <Grid x:Name="NotificationExpandedView" Opacity="0" IsHitTestVisible="False"
-                              Margin="20,16,20,16" VerticalAlignment="Top" HorizontalAlignment="Left">
+                              Width="320" Margin="20,18,20,18"
+                              VerticalAlignment="Top" HorizontalAlignment="Left">
+                            <Grid.RenderTransform>
+                                <TransformGroup>
+                                    <ScaleTransform x:Name="NotifExpandedScale" ScaleX="1" ScaleY="1"/>
+                                    <TranslateTransform x:Name="NotifExpandedSlide" Y="0"/>
+                                </TransformGroup>
+                            </Grid.RenderTransform>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
-                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
-                                <Path x:Name="NotifExpandedIcon" Width="12" Height="12" Stretch="Uniform"
-                                      Fill="#0A84FF" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBlock x:Name="NotifExpandedAppText" Text="App Name"
-                                           Foreground="#0A84FF" FontSize="12" FontWeight="Bold"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border x:Name="NotifExpandedChip"
+                                            Width="{x:Static local:DesignTokens.TileSizeRegular}"
+                                            Height="{x:Static local:DesignTokens.TileSizeRegular}"
+                                            CornerRadius="{x:Static local:DesignTokens.TileRadiusRegular}"
+                                            Background="{x:Static local:DesignTokens.AccentInfo}" VerticalAlignment="Center">
+                                        <TextBlock x:Name="NotifExpandedChipText" Text=""
+                                                   Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                                   FontSize="{x:Static local:DesignTokens.FontMarkRegular}"
+                                                   FontWeight="{x:Static local:DesignTokens.WeightBold}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Margin="0,-1,0,0"/>
+                                    </Border>
+                                    <Path x:Name="NotifExpandedIcon" Width="12" Height="12" Stretch="Uniform"
+                                          Fill="{x:Static local:DesignTokens.AccentInfo}" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    <TextBlock x:Name="NotifExpandedAppText" Text="App Name"
+                                               Foreground="{x:Static local:DesignTokens.AccentInfo}"
+                                               FontSize="{x:Static local:DesignTokens.FontKickerLarge}"
+                                               FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                               VerticalAlignment="Center" Margin="9,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
                             <TextBlock x:Name="NotifExpandedTitleText" Grid.Row="1" Text="Notification Title"
-                                       Foreground="#FFFFFF" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" MaxHeight="44" Margin="0,0,0,4"/>
+                                       Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                       FontSize="{x:Static local:DesignTokens.FontTitle}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                       TextWrapping="Wrap" MaxHeight="42" Margin="0,0,0,8"/>
                             <TextBlock x:Name="NotifExpandedBodyText" Grid.Row="2" Text="Body text here..."
-                                       Foreground="#E5FFFFFF" FontSize="13" FontWeight="Medium" TextWrapping="Wrap" MaxHeight="80" TextTrimming="WordEllipsis"/>
+                                       Foreground="{x:Static local:DesignTokens.InkBody}"
+                                       FontSize="{x:Static local:DesignTokens.FontBody}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightMedium}"
+                                       LineHeight="{x:Static local:DesignTokens.LineBody}"
+                                       LineStackingStrategy="BlockLineHeight"
+                                       TextWrapping="Wrap" MaxHeight="42" TextTrimming="WordEllipsis"/>
+                        </Grid>
+
+                        <!-- 알림 인박스 — 화면에서 걷힌 알림을 노치 안에서 다시 본다(단축키·트레이로 연다).
+                             한 번에 한 건만 앉힌다: 노치 크기에서 목록은 글자를 읽기엔 좁다.
+                             ↑↓·휠·클릭으로 넘기고 Delete로 지운다. -->
+                        <Grid x:Name="InboxView" Opacity="0" IsHitTestVisible="False"
+                              Width="380" Margin="20,16,20,16"
+                              VerticalAlignment="Top" HorizontalAlignment="Left">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>   <!-- 머리: 개수·버튼 -->
+                                <RowDefinition Height="*"/>      <!-- 한 건: 출처·제목·본문 -->
+                                <RowDefinition Height="Auto"/>   <!-- 조작 안내 -->
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Path Width="11" Height="11" Stretch="Uniform"
+                                          Fill="{x:Static local:DesignTokens.AccentInfo}"
+                                          VerticalAlignment="Center" Margin="0,0,6,0"
+                                          Data="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
+                                    <TextBlock Text="ALERTS" FontSize="{x:Static local:DesignTokens.FontSection}"
+                                               FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                               Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                               VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                                    <TextBlock x:Name="InboxCounterText" Text="1 / 1"
+                                               FontSize="{x:Static local:DesignTokens.FontSection}"
+                                               FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                               Foreground="{x:Static local:DesignTokens.InkFaint}"
+                                               VerticalAlignment="Center" Margin="8,-1,0,0"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Button x:Name="InboxClearButton" Style="{StaticResource GhostIconButton}"
+                                            Width="20" Height="20" Margin="0,0,2,0"
+                                            Click="InboxClearButton_Click" ToolTip="기록 모두 지우기">
+                                        <Path Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                                              Fill="{x:Static local:DesignTokens.InkMuted}" Width="11" Height="11" Stretch="Uniform"/>
+                                    </Button>
+                                    <Button x:Name="InboxCloseButton" Style="{StaticResource GhostIconButton}"
+                                            Width="20" Height="20"
+                                            Click="InboxCloseButton_Click" ToolTip="닫기 (Esc)">
+                                        <Path Data="M18 6L6 18M6 6l12 12"
+                                              Stroke="{x:Static local:DesignTokens.IconMuted}" StrokeThickness="2.6"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Width="10" Height="10" Stretch="Uniform"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 한 건이 통째로 움직인다 — 넘길 때 글자만 갈아끼우면 툭 바뀐 것처럼 보인다 -->
+                            <Grid x:Name="InboxItemBlock" Grid.Row="1">
+                                <Grid.RenderTransform>
+                                    <TranslateTransform x:Name="InboxItemSlide" Y="0"/>
+                                </Grid.RenderTransform>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>   <!-- 앱 타일 · 출처 · 언제 -->
+                                    <RowDefinition Height="Auto"/>   <!-- 제목 -->
+                                    <RowDefinition Height="*"/>      <!-- 본문 -->
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,7">
+                                    <Border x:Name="InboxChip"
+                                            Width="{x:Static local:DesignTokens.TileSizeRegular}"
+                                            Height="{x:Static local:DesignTokens.TileSizeRegular}"
+                                            CornerRadius="{x:Static local:DesignTokens.TileRadiusRegular}"
+                                            Background="{x:Static local:DesignTokens.AccentInfo}" VerticalAlignment="Center">
+                                        <TextBlock x:Name="InboxChipText" Text=""
+                                                   Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                                   FontSize="{x:Static local:DesignTokens.FontMarkRegular}"
+                                                   FontWeight="{x:Static local:DesignTokens.WeightBold}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Margin="0,-1,0,0"/>
+                                    </Border>
+                                    <TextBlock x:Name="InboxAppText" Text=""
+                                               Foreground="{x:Static local:DesignTokens.AccentInfo}"
+                                               FontSize="{x:Static local:DesignTokens.FontKickerLarge}"
+                                               FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                               VerticalAlignment="Center" Margin="9,0,0,0"/>
+                                    <TextBlock Text="·" Foreground="{x:Static local:DesignTokens.InkFaint}"
+                                               FontSize="{x:Static local:DesignTokens.FontKicker}"
+                                               Margin="6,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="InboxAgeText" Text=""
+                                               Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                               FontSize="{x:Static local:DesignTokens.FontMeta}"
+                                               FontWeight="{x:Static local:DesignTokens.WeightMedium}"
+                                               VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                                </StackPanel>
+
+                                <TextBlock x:Name="InboxTitleText" Grid.Row="1" Text=""
+                                           Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                           FontSize="{x:Static local:DesignTokens.FontTitle}"
+                                           FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                           TextWrapping="Wrap" MaxHeight="42" Margin="0,0,0,6"/>
+
+                                <TextBlock x:Name="InboxBodyText" Grid.Row="2" Text=""
+                                           Foreground="{x:Static local:DesignTokens.InkBody}"
+                                           FontSize="{x:Static local:DesignTokens.FontBody}"
+                                           FontWeight="{x:Static local:DesignTokens.WeightMedium}"
+                                           LineHeight="{x:Static local:DesignTokens.LineBody}"
+                                           LineStackingStrategy="BlockLineHeight"
+                                           TextWrapping="Wrap" MaxHeight="46" TextTrimming="WordEllipsis"/>
+                            </Grid>
+
+                            <TextBlock Grid.Row="2" Text="↑↓ · 휠 이동   Delete 지우기   Esc 닫기"
+                                       Foreground="{x:Static local:DesignTokens.InkFaint}"
+                                       FontSize="{x:Static local:DesignTokens.FontHint}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightMedium}" Margin="0,8,0,0"/>
                         </Grid>
 
                         <!-- Idle expanded: 얼굴 아래 충전/저전력 상태 배지 -->
@@ -355,20 +536,17 @@
                                              HorizontalAlignment="Center"/>
                         </StackPanel>
 
-                        <!-- Media compact — 평소엔 좌우 여백이 같아 제목과 이퀄라이저가 대칭으로 앉는다.
-                             상태 점이 나타날 때만 그만큼(20) 이퀄라이저가 왼쪽으로 비켜나 자리를 내준다.
-                             배터리 점도 AI 상태 점도 같은 자리(MainContainer 우측 끝 12px)를 쓴다. -->
+                        <!-- Media compact — 이제 제목과 가사만 남는다. 소리는 오른쪽 끝 링 안의 바늘이
+                             말한다(예전엔 이 자리에 장식용 3바가 따로 있었고, 점이 뜨면 비켜났다).
+                             링은 재생 내내 이 자리에 상주하므로 오른쪽 여백을 늘 비워 둔다 —
+                             볼륨을 만질 때만 뜨던 시절의 '점이 뜨면 민다' 규칙은 필요 없다. -->
                         <Grid x:Name="MediaCompactView" Opacity="0" IsHitTestVisible="False"
                               VerticalAlignment="Center">
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Margin" Value="14,0,14,0"/>
                                     <Style.Triggers>
-                                        <!-- 점이 보이는 동안만(충전 중·배터리 부족) 이퀄라이저를 민다 -->
-                                        <DataTrigger Binding="{Binding Visibility, ElementName=BatteryDot}" Value="Visible">
-                                            <Setter Property="Margin" Value="14,0,34,0"/>
-                                        </DataTrigger>
-                                        <!-- 볼륨을 만질 때 뜨는 링에게도 같은 자리를 내준다 -->
+                                        <!-- 링이 이 자리를 쓰는 동안 글자가 그 밑으로 들어가지 않게 -->
                                         <DataTrigger Binding="{Binding Visibility, ElementName=VolumeRing}" Value="Visible">
                                             <Setter Property="Margin" Value="14,0,34,0"/>
                                         </DataTrigger>
@@ -378,27 +556,20 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="CompactTitleText" Grid.Column="0" Text="재생 중인 미디어 없음"
-                                       Foreground="#FFFFFF" FontSize="13.5" FontWeight="SemiBold"
+                                       Foreground="{x:Static local:DesignTokens.InkPrimary}"
+                                       FontSize="{x:Static local:DesignTokens.FontTitleCompact}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
                                        LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                        VerticalAlignment="Center" Margin="0,-2,14,0" TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="CompactLyricText" Grid.Column="1" Text=""
-                                       Foreground="#8E8E93" FontSize="13" FontWeight="Medium"
+                                       Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                       FontSize="{x:Static local:DesignTokens.FontBody}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightMedium}"
                                        LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                        VerticalAlignment="Center" HorizontalAlignment="Center"
                                        Margin="0,-2,0,0" TextTrimming="CharacterEllipsis"/>
-                            <StackPanel x:Name="EqualizerPanel" Grid.Column="2" Orientation="Horizontal"
-                                        VerticalAlignment="Center" Margin="10,0,0,0">
-                                <!-- 색은 코드에서 현재 곡의 색(테두리 빛과 동일)으로 바꿔 끼운다 -->
-                                <Border x:Name="EqBar1" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
-                                <Border x:Name="EqBar2" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
-                                <Border x:Name="EqBar3" Width="2.5" Height="3" CornerRadius="1.25"
-                                        Background="#F0F3F8" Margin="1,0,1,0" VerticalAlignment="Center"/>
-                            </StackPanel>
                         </Grid>
 
                         <!-- Media expanded -->
@@ -502,10 +673,14 @@
                                     <!-- 시간 줄 -->
                                     <Grid x:Name="ExpandedTimeRow" Grid.Row="1" Margin="0,6,0,0">
                                         <TextBlock x:Name="CurrentTimeText" Text="0:00"
-                                                   Foreground="#8E8E93" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                                   FontSize="{x:Static local:DesignTokens.FontSection}"
+                                                   FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
                                                    HorizontalAlignment="Left" VerticalAlignment="Center"/>
                                         <TextBlock x:Name="TotalTimeText" Text="0:00"
-                                                   Foreground="#8E8E93" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                                   FontSize="{x:Static local:DesignTokens.FontSection}"
+                                                   FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
                                                    HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Grid>
@@ -543,13 +718,20 @@
 
                     </Grid>
 
-                    <!-- 볼륨 링 — 볼륨을 만지는 동안만 우측 상태 점 자리를 원형 아크가 감싼다.
+                    <!-- 볼륨 링 — 오른쪽 끝 자리의 주인. 볼륨을 만드는 동안에도, 소리가 흐르는 동안에도
+                         떠 있다(재생 중엔 안쪽 세 칸이 지금 나는 소리를 그린다). 상태 점이 뜨면
+                         바늘만 비켜선다 — 자리를 양보하는 것은 호가 아니다.
                          진행바를 쓰지 않으므로 재생 위치를 가리지 않는다. 상태 점과 같은 중심에 두어
                          (점 중심 = 오른쪽 18px) 링이 점을 감싸 보이게 한다. -->
                     <controls:VolumeRing x:Name="VolumeRing" Width="24" Height="24"
                                          HorizontalAlignment="Right" VerticalAlignment="Center"
                                          Margin="0,0,6,0"
-                                         Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"/>
+                                         Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                                         RenderTransformOrigin="0.5,0.5">
+                        <controls:VolumeRing.RenderTransform>
+                            <ScaleTransform x:Name="VolumeRingScale" ScaleX="1" ScaleY="1"/>
+                        </controls:VolumeRing.RenderTransform>
+                    </controls:VolumeRing>
 
                     <!-- 공용 상태 점 자리 — 오른쪽 끝에서 12px, 12×12 후광 + 5×5 코어.
                          배터리도 AI도 이 한 자리만 쓴다. 위치가 하나라 화면이 바뀌어도 눈이 옮겨 다니지 않는다.
@@ -559,8 +741,9 @@
                           HorizontalAlignment="Right" VerticalAlignment="Center"
                           Margin="0,0,12,0" Visibility="Collapsed" IsHitTestVisible="False">
                         <Ellipse x:Name="BatteryDotGlow" Width="12" Height="12"
-                                 Opacity="0.3" Fill="#34C759"/>
-                        <Ellipse x:Name="BatteryDotCore" Width="5" Height="5" Fill="#34C759"/>
+                                 Opacity="0.3" Fill="{x:Static local:DesignTokens.AccentCharging}"/>
+                        <Ellipse x:Name="BatteryDotCore" Width="5" Height="5"
+                                 Fill="{x:Static local:DesignTokens.AccentCharging}"/>
                     </Grid>
 
                     <!-- AI 상태 점 — 배터리 점과 같은 자리·같은 크기. 색과 숨쉬는 빛만으로 상태를 말한다.
@@ -569,22 +752,31 @@
                           HorizontalAlignment="Right" VerticalAlignment="Center"
                           Margin="0,0,12,0" Visibility="Collapsed" IsHitTestVisible="False">
                         <Ellipse x:Name="AssistantStatusGlow" Width="12" Height="12"
-                                 Opacity="0.3" Fill="#B69CFF"/>
-                        <Ellipse x:Name="AssistantStatusCore" Width="5" Height="5" Fill="#B69CFF"/>
+                                 Opacity="0.3" Fill="{x:Static local:DesignTokens.AiThinkingBrush}"/>
+                        <Ellipse x:Name="AssistantStatusCore" Width="5" Height="5"
+                                 Fill="{x:Static local:DesignTokens.AiThinkingBrush}"/>
                     </Grid>
 
-                    <!-- 복사 피드백: 노치 안쪽 우측에 잠깐 스며드는 배지.
-                         별도 창(캡슐)을 띄우지 않고 아일랜드 안에서만 알린다. -->
-                    <Border x:Name="ClipboardFeedbackChip" Width="22" Height="22" CornerRadius="11"
+                    <!-- 복사 피드백: 노치 안쪽 우측에 잠깐 스며드는 타일.
+                         별도 창(캡슐)을 띄우지 않고 아일랜드 안에서만 알린다.
+                         모양은 알림의 앱 타일과 같다 — 같은 자리에 같은 모양의 타일이 앉지만
+                         안에 드는 것이 다르다: 복사는 앱이 아니라 '방금 생긴 일'이라 글리프를 쓴다.
+                         타일 18 + 오른쪽 여백 9 = 중심이 오른쪽 끝에서 18px — 배터리·AI 점과 같은 중심. -->
+                    <Border x:Name="ClipboardFeedbackChip"
+                            Width="{x:Static local:DesignTokens.TileSizeCompact}"
+                            Height="{x:Static local:DesignTokens.TileSizeCompact}"
+                            CornerRadius="{x:Static local:DesignTokens.TileRadiusCompact}"
                             HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0"
-                            Background="#2C2C30" BorderBrush="#3DFFFFFF" BorderThickness="1"
+                            Background="{x:Static local:DesignTokens.AccentInfo}"
                             Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
                             RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="ClipboardFeedbackScale" ScaleX="1" ScaleY="1"/>
                         </Border.RenderTransform>
                         <Path Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
-                              Fill="#0A84FF" Width="11" Height="11" Stretch="Uniform"/>
+                              Fill="{x:Static local:DesignTokens.InkPrimary}"
+                              Width="{x:Static local:DesignTokens.FontMarkCompact}"
+                              Height="{x:Static local:DesignTokens.FontMarkCompact}" Stretch="Uniform"/>
                     </Border>
 
                 </Grid>
@@ -597,10 +789,12 @@
                                  CornerRadius="19" BorderWidth="1.2" Strength="1.0" Active="True"/>
         </Grid>
 
-        <!-- 클립보드 기록 패널: 노치 아래 중앙에 내려온다 (Ctrl+Shift+V 또는 노치 클릭) -->
+        <!-- 클립보드 기록 패널: 노치 아래 중앙에 내려온다 (Ctrl+Shift+V 또는 노치 클릭)
+             폭은 고정한다 — 폭이 내용을 따라가면 복사할 때마다 카드가 늘었다 줄었다 한다
+             (알림 카드에서 같은 이유로 폭을 고정했다). -->
         <Canvas IsHitTestVisible="True">
             <Border x:Name="ClipboardHistoryPanel" Canvas.Left="0" Canvas.Top="0"
-                    MaxWidth="300" CornerRadius="14"
+                    Width="320" CornerRadius="14"
                     Background="#0C0C0E" BorderThickness="1"
                     Style="{StaticResource DarkNotchStyle}"
                     RenderTransformOrigin="0,0"
@@ -609,17 +803,35 @@
                     <TranslateTransform x:Name="ClipboardHistoryTransform" Y="0"/>
                 </Border.RenderTransform>
                 <StackPanel>
+                    <!-- 머리 — 인박스와 같은 리듬: 작은 글리프 + 이름표. 두 패널이 다른 머리를 쓰면
+                         같은 앱의 두 목록이 아니라 서로 다른 도구처럼 보인다. -->
                     <Grid Margin="12,8,6,0">
-                        <TextBlock Text="CLIPBOARD" FontSize="9.5" FontWeight="SemiBold" Foreground="#8E8E93"
-                                   HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <Path Width="11" Height="11" Stretch="Uniform"
+                                  Fill="{x:Static local:DesignTokens.AccentInfo}"
+                                  VerticalAlignment="Center" Margin="0,0,6,0"
+                                  Data="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                            <TextBlock Text="CLIPBOARD" FontSize="{x:Static local:DesignTokens.FontSection}"
+                                       FontWeight="{x:Static local:DesignTokens.WeightSemiBold}"
+                                       Foreground="{x:Static local:DesignTokens.InkMuted}"
+                                       VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                        </StackPanel>
                         <Button x:Name="ClipboardClearButton" Style="{StaticResource GhostIconButton}"
                                 Width="20" Height="20" HorizontalAlignment="Right" VerticalAlignment="Center"
                                 Click="ClipboardClearButton_Click" ToolTip="기록 모두 지우기">
                             <Path Data="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
-                                  Fill="#8E8E93" Width="11" Height="11" Stretch="Uniform"/>
+                                  Fill="{x:Static local:DesignTokens.InkMuted}" Width="11" Height="11" Stretch="Uniform"/>
                         </Button>
                     </Grid>
-                    <StackPanel x:Name="ClipboardHistoryRows" Margin="6"/>
+                    <!-- 목록은 머리 뒤에 정착한다 — 상자와 내용이 같은 프레임에 나타나면 툭 튀어나온 것처럼 보인다 -->
+                    <StackPanel x:Name="ClipboardHistoryRows" Margin="6" Opacity="0">
+                        <StackPanel.RenderTransform>
+                            <TransformGroup>
+                                <ScaleTransform x:Name="ClipboardRowsScale" ScaleX="1" ScaleY="1"/>
+                                <TranslateTransform x:Name="ClipboardRowsSlide" Y="0"/>
+                            </TransformGroup>
+                        </StackPanel.RenderTransform>
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </Canvas>

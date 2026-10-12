@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -12,7 +12,7 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
-        private enum ViewMode { IdleCompact, IdleExpanded, MediaCompact, MediaExpanded, NotificationCompact, NotificationExpanded, Assistant, AssistantCompact }
+        // ViewMode(도크 모양)는 TopDock.Logic으로 옮겼다 — 전환 결정이 UI 밖 순수 로직이 됐다.
 
         /// <summary>배터리는 퍼센트가 아니라 3분류로만 판단한다.</summary>
         private enum BatteryLevel { Normal, Charging, Low }
@@ -25,6 +25,7 @@ namespace TopDock
         // AI 비서 전역 핫키: Ctrl+Shift+Space
         private const int HOTKEY_ID_ASSISTANT = 0xB00B;
         private const int HOTKEY_ID_CLIPBOARD = 0xB00C;   // Ctrl+Shift+V
+        private const int HOTKEY_ID_INBOX = 0xB00D;       // Ctrl+Shift+N
         private const uint MOD_CONTROL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
         private const uint MOD_NOREPEAT = 0x4000;
@@ -141,23 +142,32 @@ namespace TopDock
         private DispatcherTimer? _volumeHudTimer;
         private DispatcherTimer? _notificationTimer;
         private DispatcherTimer? _emptyMediaDebounceTimer;
-        private Storyboard? _eqStoryboard;
+        private readonly DispatcherTimer _audioBarsTimer;
 
-        // 이퀄라이저 바는 테두리 빛과 같은 색을 쓴다 — 브러시 하나를 세 바가 공유하고 색만 바꾼다
-        private readonly SolidColorBrush _equalizerBrush = new(EqualizerIdleColor);
-        private Color _equalizerAccent = EqualizerIdleColor;
-        private static readonly Color EqualizerIdleColor = Color.FromRgb(0xF0, 0xF3, 0xF8);
+        // 지금 나는 소리를 되받아 세 칸으로 바꿔 둔다 — SMTC는 음량을 알려주지 않는다.
+        // 캡처는 자기 스레드에서 돌고, 창은 30fps로 그 결과만 읽는다.
+        private readonly AudioCaptureService _audioCapture = new();
+        private readonly float[] _levelBars = new float[Tokens.RingBarCount];
+        private bool _mediaPlaying;
+
+        // 링 안의 바늘은 테두리 빛과 같은 색을 쓴다 — 브러시 하나를 공유하고 색만 바꾼다
+        private readonly SolidColorBrush _audioBarsBrush = new(AudioBarsIdleColor);
+        private Color _audioBarsAccent = AudioBarsIdleColor;
+        private static readonly Color AudioBarsIdleColor = Color.FromRgb(0xF0, 0xF3, 0xF8);
 
         // 트랙 전환 사이 SMTC가 잠깐 보고하는 빈 미디어를 필터링하기 위한 유예 시간
         private static readonly TimeSpan EmptyMediaDebounceDelay = TimeSpan.FromMilliseconds(1500);
 
-        private ViewMode _currentViewMode = ViewMode.IdleCompact;
+        // 도크 모양과 "열려 있기를 바라는 의도"는 상태 머신 하나가 들고 있다. 아래 두 이름은
+        // 그 값을 읽고 쓰는 창구라, 창 코드가 필드를 다루던 자리를 그대로 둘 수 있다.
+        private readonly DockState _dock = new();
+        private ViewMode _currentViewMode { get => _dock.Mode; set => _dock.Show(value); }
         private ViewMode _viewModeBeforeNotification = ViewMode.IdleCompact;
         private string _lastMediaKey = string.Empty;
         private Color? _albumColor;   // 현재 트랙 앨범 지배색 — 노치 테두리 빛에 물린다
         private bool _orbCentral;     // 작업 중 노치 테두리 강조가 활성화되어 있는가
         private string _lastBeamState = "";
-        private bool _isExpanded = false;
+        private bool _isExpanded { get => _dock.Expanded; set => _dock.SetExpanded(value); }
 
         // 가사 싱크 — 뮤직비디오 앞 여백(인트로)만큼 가사를 늦춘다.
         private TimeSpan _lyricOffset = TimeSpan.Zero;
@@ -170,10 +180,8 @@ namespace TopDock
         public MainWindow()
         {
             InitializeComponent();
-            // 세 바가 브러시 하나를 공유 — UpdateEqualizerAccent가 색만 갈아 끼우면 전부 바뀐다
-            EqBar1.Background = _equalizerBrush;
-            EqBar2.Background = _equalizerBrush;
-            EqBar3.Background = _equalizerBrush;
+            // 링의 바늘은 브러시 하나를 공유 — 곡이 바뀌면 색만 갈아 끼우면 된다
+            VolumeRing.BarsBrush = _audioBarsBrush;
 
             ConfigService.Load();
 
@@ -215,6 +223,13 @@ namespace TopDock
             };
             _progressTimer.Tick += ProgressTimer_Tick;
 
+            // 소리 바늘 — 30fps. 값이 없으면(캡처를 못 열었다) 바늘만 감추고 호는 그대로 둔다.
+            _audioBarsTimer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(Tokens.MeterRenderMs)
+            };
+            _audioBarsTimer.Tick += AudioBars_Tick;
+
             _clockTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromSeconds(1)
@@ -240,9 +255,7 @@ namespace TopDock
 
             _ = _mediaService.InitializeAsync();
             _ = _notificationService.InitializeAsync();
-            _batteryService.Start();
-            
-            SwitchViewMode(ViewMode.IdleCompact);
+            _batteryService.Start();            SwitchViewMode(ViewMode.IdleCompact);
         }
 
         protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -285,6 +298,30 @@ namespace TopDock
                         break;
                 }
             }
+
+            // 알림 인박스 키보드 조작 — ↑↓ 이동 / Delete 지우기 / Esc 닫기
+            if (_inboxOpen)
+            {
+                switch (e.Key)
+                {
+                    case Key.Escape:
+                        CloseNotificationInbox();
+                        e.Handled = true;
+                        break;
+                    case Key.Up:
+                        MoveInboxSelection(-1);
+                        e.Handled = true;
+                        break;
+                    case Key.Down:
+                        MoveInboxSelection(1);
+                        e.Handled = true;
+                        break;
+                    case Key.Delete:
+                        RemoveSelectedFromInbox();
+                        e.Handled = true;
+                        break;
+                }
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -310,6 +347,10 @@ namespace TopDock
                 RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
             }
 
+            // 놓친 알림 기록 (Ctrl+Shift+N)
+            if (!RegisterHotKey(hwnd, HOTKEY_ID_INBOX, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x4E))
+                Log.Warn("Inbox hotkey Ctrl+Shift+N is already taken by another app");
+
             UpdatePosition();
         }
 
@@ -323,6 +364,11 @@ namespace TopDock
             if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID_CLIPBOARD)
             {
                 Dispatcher.Invoke(ToggleClipboardHistory);
+                return (IntPtr)1;
+            }
+            if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID_INBOX)
+            {
+                Dispatcher.Invoke(ToggleNotificationInbox);
                 return (IntPtr)1;
             }
             if (msg == WM_CLIPBOARDUPDATE)
@@ -396,7 +442,8 @@ namespace TopDock
             _volumeHudTimer?.Stop();
             _emptyMediaDebounceTimer?.Stop();
             StopNotchRadiusAnimation();
-            StopEqualizerAnimation();
+            _audioBarsTimer.Stop();
+            _audioCapture.Dispose();
 
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)

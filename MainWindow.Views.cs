@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -42,48 +42,76 @@ namespace TopDock
             face.SetState(Controls.AiFace.FaceState.Idle);
         }
 
+        /// <summary>
+        /// 도크 모양을 정하는 데 필요한 지금의 신호 한 벌. 창이 아는 것을 그대로 모아 주면
+        /// "그래서 어떤 모양이어야 하는가"는 DockState(순수 로직)가 답한다.
+        /// </summary>
+        private DockSignals Signals => new(
+            HasMedia: HasMedia,
+            VolumeHudActive: _volumeHudTimer?.IsEnabled == true,
+            NoticeActive: NoticeVisible,
+            AssistantView: _currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact,
+            MouseOver: NotchBorder.IsMouseOver,
+            InboxOpen: _inboxOpen);
+
+        /// <summary>알림이 하나라도 떠 있는가 — 타이머가 도는 중이거나, 스스로 사라지지 않는 알림.</summary>
+        private bool NoticeVisible => NoticeActive || _notificationTimer?.IsEnabled == true;
+
+        /// <summary>
+        /// 상태 머신이 정한 모양으로 옮긴다. 이미 그 모양이거나 옮길 게 없으면(null) 아무 일도 하지 않는다 —
+        /// 같은 모양으로 다시 전환하면 모프 애니메이션만 처음부터 돌아 화면이 튄다.
+        ///
+        /// redraw: 같은 모양이어도 내용에 따라 크기가 달라졌을 수 있을 때(새 곡의 가사 자리 등).
+        /// 그때는 모양 전환이 아니라 다시 그리기다.
+        /// </summary>
+        private void ApplyMode(ViewMode? next, bool redraw = false)
+        {
+            if (next is not { } mode || (mode == _currentViewMode && !redraw)) return;
+
+            SwitchViewMode(mode);
+
+            // 접힌 아이들 얼굴은 다시 접힐 때마다 기본 표정으로 돌려놓는다
+            if (mode is ViewMode.IdleCompact or ViewMode.MediaCompact)
+            {
+                CompactFace?.SetState(Controls.AiFace.FaceState.Idle);
+            }
+        }
+
+        /// <summary>
+        /// 지금 신호로 모양을 다시 정한다. 볼륨 HUD가 떠 있는 동안엔 크기 변경을 미룬다 —
+        /// 그 사이 마우스가 들어오거나 나간 일은 HUD가 끝날 때 VolumeHudExpired가 한 번만 반영한다.
+        /// </summary>
+        private void SyncViewMode()
+        {
+            if (Signals.VolumeHudActive) return;
+            ApplyMode(_dock.Resolve(Signals));
+        }
+
         private void Notch_MouseEnter(object sender, MouseEventArgs e)
         {
-            _isExpanded = true;
-
-
-            // 비서 화면이나 작업 중 아일랜드는 마우스가 스쳐도 크기를 바꾸지 않는다 —
-            // 작업 중에 아일랜드가 커졌다 작아지면 눈과 문구가 계속 튄다.
-            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
-            if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
-            if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
-            {
-                // 알림이 떠 있으면 펼쳐서 본문까지 보여준다 (끝나면 원래 화면으로 돌아간다)
-                SwitchViewMode(ViewMode.NotificationExpanded);
-                return;
-            }
-            SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
-            RefreshIdleFace();
+            // 비서 화면(작업 중 아일랜드)·볼륨 HUD·알림까지 아는 한 곳에서 다음 모양을 정한다
+            ViewMode? next = _dock.Hover(Signals);
+            ApplyMode(next);
+            if (next is ViewMode.IdleExpanded) RefreshIdleFace();
         }
 
         private void Notch_MouseLeave(object sender, MouseEventArgs e)
         {
-            // AI 비서 대화 중·작업 중에는 마우스가 벗어나도 닫지 않는다 (닫기는 ✕ 버튼 또는 Esc)
-            if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact)
-            {
-                HideVolumeRingOverlay();
-                return;
-            }
-            _isExpanded = false;
-            HideVolumeRingOverlay();
-
-            if (_volumeHudTimer != null && _volumeHudTimer.IsEnabled) return;
-            if (NoticeActive || (_notificationTimer != null && _notificationTimer.IsEnabled))
-            {
-                SwitchViewMode(ViewMode.NotificationCompact);
-                return;
-            }
-            SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
-            CompactFace?.SetState(Controls.AiFace.FaceState.Idle);
+            // 비서 화면은 마우스가 벗어나도 닫지 않는다 — 닫기는 ✕ 버튼과 Esc가 맡는다(DockState가 안다)
+            SyncAudioRing(animate: true);
+            ApplyMode(_dock.Leave(Signals));
         }
 
         private void Notch_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
         {
+            // 인박스를 보는 중엔 휠이 볼륨이 아니라 기록을 넘긴다 — 위로 굴리면 최신 쪽으로
+            if (_inboxOpen)
+            {
+                MoveInboxSelection(e.Delta > 0 ? -1 : 1);
+                e.Handled = true;
+                return;
+            }
+
             float step = 0.02f;
             int newVol = _audioService.StepVolume(e.Delta > 0 ? step : -step, out bool isMuted);
             ShowVolumeRing(newVol, isMuted);
@@ -100,8 +128,8 @@ namespace TopDock
             var wAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
             var hAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
 
-            Timeline.SetDesiredFrameRate(wAnim, 60);
-            Timeline.SetDesiredFrameRate(hAnim, 60);
+            Timeline.SetDesiredFrameRate(wAnim, Tokens.FrameRate);
+            Timeline.SetDesiredFrameRate(hAnim, Tokens.FrameRate);
 
             NotchBeam.BeginAnimation(WidthProperty, wAnim);
             NotchBeam.BeginAnimation(HeightProperty, hAnim);
@@ -177,6 +205,9 @@ namespace TopDock
         /// <summary>컴팩트 노치에서 가사 한 줄에 내주는 최대 폭.</summary>
         private const double CompactLyricBudget = 210;
 
+        /// <summary>컴팩트 노치 오른쪽 끝에서 링이 쓰는 폭 — 링 24 + 오른쪽 여백 6.</summary>
+        private const double RingSlotWidth = 30;
+
         private double CalculateCompactWidth()
         {
             string title = CompactTitleText.Text ?? "";
@@ -187,11 +218,12 @@ namespace TopDock
             // 가사가 한 줄 바뀔 때마다 노치 폭이 200ms 애니메이션으로 흔들렸다.
             double lyricWidth = LyricsExpected ? CompactLyricBudget : 0;
 
-            // 35 = 좌우 여백 + 이퀄라이저 폭, 20 = 그 오른쪽 배터리 점 자리.
-            // 점은 대부분 숨겨져 있지만 자리는 항상 비워 둔다 — 재생 중에 충전을 시작해도
-            // 폭을 다시 계산하러 들어갈 필요가 없다.
+            // 35 = 좌우 여백 + 제목과 가사 사이, 30 = 오른쪽 끝 자리(링 24 + 여백 6).
+            // 이 자리는 재생 내내 링이 쓰고 그 위에 배터리 점이 잠깐 앉는다 — 둘 중 넓은 쪽을
+            // 늘 비워 둔다. 상태가 바뀔 때마다 폭을 다시 계산하러 들어갈 필요가 없다.
             double baseWidth = 45;
-            double calculated = baseWidth + titleWidth + lyricWidth + 35 + BatteryDotSlotWidth;
+            double rightSlot = Math.Max(RingSlotWidth, BatteryDotSlotWidth);
+            double calculated = baseWidth + titleWidth + lyricWidth + 35 + rightSlot;
             return Math.Clamp(calculated, 320, 800);
         }
 
@@ -220,14 +252,15 @@ namespace TopDock
 
         private void SwitchViewMode(ViewMode mode)
         {
+            ViewMode previous = _currentViewMode;
             _currentViewMode = mode;
             // 얼굴 애니메이션은 AiFace가 자기 상태와 보이는 여부로 관리한다 —
             // 여기서 상태를 추측해 켜고 끄면 실제 표정과 어긋난다.
             AssistantFace.Visibility = mode == ViewMode.Assistant ? Visibility.Visible : Visibility.Collapsed;
 
             // 확장은 여유 있게, 축소는 빠르게 — 모프 방향에 따라 리듬을 다르게 (targetWidth 결정 후 계산)
-            Duration duration = new Duration(TimeSpan.FromMilliseconds(450));
-            ExponentialEase ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 6 };
+            Duration duration = new Duration(TimeSpan.FromMilliseconds(Tokens.ViewFadeInMs));
+            ExponentialEase ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.MorphEaseExponent };
 
             double targetWidth = 100;
             double targetHeight = 38;
@@ -266,8 +299,14 @@ namespace TopDock
                     activeView = MediaExpandedView;
                     break;
                 case ViewMode.NotificationCompact:
-                    // 아이콘(11) + 여백(7) + 좌우 패딩(14×2) + 라벨-제목 간격(10)을 더해 문장이 잘리지 않게
-                    targetWidth = Math.Clamp(MeasureTextWidth(NotifCompactAppText.Text, 13.5, FontWeights.Bold) + MeasureTextWidth(NotifCompactTitleText.Text, 13, FontWeights.SemiBold) + 96, 260, 500);
+                    // 앱 타일(18) + 타일-이름(8) + 이름-제목(9) + 좌우 여백(14×2) = 63에 글자 폭을 더한다.
+                    // 상한을 좁게 잡은 이유: 예전엔 500까지 늘어나 긴 제목 하나가 노치를 가로질렀다.
+                    // 음악이 흐르는 동안엔 오른쪽 끝 자리를 링이 쓰므로 그만큼 더 넓한다 —
+                    // 한 줄 카드에선 제목이 오른쪽 끝까지 차서, 안 넓하면 링이 글자 위에 얹힌다.
+                    targetWidth = Math.Clamp(
+                        MeasureTextWidth(NotifCompactAppText.Text, 12, FontWeights.SemiBold)
+                        + MeasureTextWidth(NotifCompactTitleText.Text, 13.5, FontWeights.SemiBold)
+                        + 67 + (WantAudioRing ? RingSlotWidth : 0), 240, 420);
                     targetHeight = 38;
                     targetRadius = 19;
                     activeView = NotificationCompactView;
@@ -277,6 +316,14 @@ namespace TopDock
                     targetHeight = 160;
                     targetRadius = 32;
                     activeView = NotificationExpandedView;
+                    break;
+                case ViewMode.Inbox:
+                    // 기록 카드 — 한 건씩 앉히니 내용에 맞춰 자리를 넉넉히 준다.
+                    // 너무 크면 노치가 아니라 창처럼 보인다(알림 확장 360×160보다 한 뼘만 크게).
+                    targetWidth = 420;
+                    targetHeight = 200;
+                    targetRadius = 32;
+                    activeView = InboxView;
                     break;
                 case ViewMode.AssistantCompact:
                     // 작업 중 아일랜드 — 눈만 둔다. 문구가 없으니 아이들 아일랜드와 같은 폭(100)으로 고정,
@@ -304,14 +351,12 @@ namespace TopDock
             {
                 AssistantHeaderOverlay.IsHitTestVisible = false;
                 AssistantHeaderOverlay.BeginAnimation(UIElement.OpacityProperty,
-                    new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(150)) });
+                    new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(Tokens.ViewFadeOutMs)) });
             }
 
-            // 접힌 상태로 돌아가면 볼륨 오버레이도 함께 정리한다 (확장 상태에서만 쓰는 UI)
-            if (!_isExpanded)
-            {
-                ResetVolumeOverlays();
-            }
+            // 링은 모양이 바뀔 때마다 지금의 의도에 맞춰 즉시 앉힌다 — 페이드가 모프와 겹치면
+            // 어긋나 보인다(예전엔 접힐 때만 정리했지만, 이제 링은 재생 내내 떠 있다)
+            SettleAudioRing();
 
             // 가사 자리는 폭과 함께 결정된다 — 좌우 정렬과 열 너비를 먼저 맞춰야
             // 페이드인 순간에 내용이 다른 자리에 앉았다가 건너뛰지 않는다
@@ -325,13 +370,18 @@ namespace TopDock
             ApplyAssistantIndicator();
 
             bool expanding = targetWidth > NotchBorder.Width;
-            duration = new Duration(TimeSpan.FromMilliseconds(expanding ? 520 : 380));
+            // 알림은 빠르게 — 오래 늘어나는 카드가 아니라 "방금 무슨 일이 있었다"는 신호라
+            // 빨리 자리를 잡고(300ms) 빨리 걷히는 편이 알림답다. 걷히는 방향(평소 화면으로)은
+            // 아래 기본값을 그대로 써서 부드럽게 돌아간다.
+            bool notice = mode is ViewMode.NotificationCompact or ViewMode.NotificationExpanded;
+            duration = new Duration(TimeSpan.FromMilliseconds(
+                notice ? Tokens.NoticeMorphMs : expanding ? Tokens.MorphExpandMs : Tokens.MorphCollapseMs));
 
             DoubleAnimation widthAnim = new DoubleAnimation { To = targetWidth, Duration = duration, EasingFunction = ease };
             DoubleAnimation heightAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
 
-            Timeline.SetDesiredFrameRate(widthAnim, 60);
-            Timeline.SetDesiredFrameRate(heightAnim, 60);
+            Timeline.SetDesiredFrameRate(widthAnim, Tokens.FrameRate);
+            Timeline.SetDesiredFrameRate(heightAnim, Tokens.FrameRate);
 
             NotchBorder.BeginAnimation(Border.WidthProperty, widthAnim);
             NotchBorder.BeginAnimation(Border.HeightProperty, heightAnim);
@@ -341,31 +391,61 @@ namespace TopDock
             UpdateGlowDimensions(targetWidth, targetHeight, duration, ease);
 
             DoubleAnimation mainContainerHeightAnim = new DoubleAnimation { To = targetHeight, Duration = duration, EasingFunction = ease };
-            Timeline.SetDesiredFrameRate(mainContainerHeightAnim, 60);
+            Timeline.SetDesiredFrameRate(mainContainerHeightAnim, Tokens.FrameRate);
             MainContainer.BeginAnimation(FrameworkElement.HeightProperty, mainContainerHeightAnim);
 
             UpdateBeamInteriorLight();
+
+            // 비서 화면의 내용도 알림 카드와 같은 순서로 바뀐다 — 상자가 먼저 자리를 만들고
+            // 내용이 뒤따라 앉는다. 같은 프레임에 다 나타나면 카드가 툭 튀어나온 것처럼 보인다.
+            PlayAssistantContentTransition(previous, mode);
+        }
+
+        /// <summary>비서 카드의 내용이 앉고 물러나는 손짓 — 알림 내용과 같은 리듬(220ms · 90ms 지연).</summary>
+        private void PlayAssistantContentTransition(ViewMode previous, ViewMode next)
+        {
+            if (next == ViewMode.Assistant && previous != ViewMode.Assistant)
+            {
+                PlayContentSettle(AssistantView, AssistantContentScale, AssistantContentSlide);
+            }
+            else if (previous == ViewMode.Assistant && next != ViewMode.Assistant)
+            {
+                PlayContentExit(AssistantView, AssistantContentScale, AssistantContentSlide);
+            }
         }
 
         /// <summary>
-        /// 노치 테두리 빛의 '안쪽 물들임·틴트'를 상황에 맞게 켜고 끈다.
+        /// 노치 테두리 빛의 '안쪽 물들임·틴트'를 상황에 맞게 낮춘다.
         ///
         /// 이 빛은 표면 크기에 비례해 세진다 — 작은 알약(100×38)에선 사실상 0이고,
-        /// 확장 카드(260×120, 748×144)에선 최대로 번진다. 그래서 같은 흰 바도
-        /// 확장 상태에서 휠로 볼륨을 만지면 앨범색으로 물들고,
-        /// 접힌 HUD에서 키보드로 만지면 순백으로 보여 자리마다 색이 달라 보였다.
-        /// 볼륨 UI가 떠 있는 동안엔 안쪽 빛을 꺼서 어느 경로로 만져도 바 색이 같게 한다.
+        /// 확장 카드(260×120, 748×144)에선 최대로 번진다. 빛은 링 위에 얹혀 그려지므로
+        /// 그대로 두면 링이 앨범색에 물든다.
+        ///
+        /// 다만 0으로 꺼서는 안 된다 — 확장 카드에서 안쪽 빛은 '분위기' 그 자체라,
+        /// 0으로 끄면 볼륨을 만질 때마다 카드의 빛이 통째로 사라져 고장처럼 보인다.
+        /// 게다가 이 빛은 표면이 작은 접힌 노치에선 눈에 띄지 않으므로, 껴 놓으면
+        /// 확장 카드에서만 꺼지는 셈이 된다. 그래서 남겨 두고, 즉시가 아니라 부드럽게.
+        ///
+        /// 기준이 '링이 떠 있는가'가 아니라 '볼륨을 만지는 중인가'인 이유: 링은 이제 재생 내내
+        /// 떠 있어서, 링을 기준으로 두면 카드의 분위기가 재생 내내 죽는다. 물들어도 되는 순간은
+        /// 링이 손끝의 관심사일 때뿐이라 그 짧은 동안만 낮춘다.
         /// </summary>
         private void UpdateBeamInteriorLight()
         {
-            bool volumeUiVisible = _volumeRingOverlayVisible;
-            NotchBeam.InteriorLight = volumeUiVisible ? 0.0 : 1.0;
+            bool volumeHud = _volumeHudTimer?.IsEnabled == true;
+            double target = volumeHud ? Tokens.InteriorLightWhileVolume : 1.0;
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.EaseOutExponent };
+            var dur = new Duration(TimeSpan.FromMilliseconds(Tokens.InteriorFadeMs));
+
+            // 지금 보이는 값에서 출발한다 — HUD를 연달아 만져도 매번 튀지 않고 이어진다
+            Animate(NotchBeam, Controls.BorderBeam.InteriorLightProperty,
+                new DoubleAnimation(NotchBeam.InteriorLight, target, dur) { EasingFunction = ease });
         }
 
         private void SetViewActive(UIElement activeView, Duration duration, IEasingFunction ease)
         {
-            UIElement[] views = { IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, AssistantView, AssistantCompactView };
-            Duration fadeOutDuration = new Duration(TimeSpan.FromMilliseconds(150));
+            UIElement[] views = { IdleCompactView, IdleExpandedView, MediaCompactView, MediaExpandedView, NotificationCompactView, NotificationExpandedView, InboxView, AssistantView, AssistantCompactView };
+            Duration fadeOutDuration = new Duration(TimeSpan.FromMilliseconds(Tokens.ViewFadeOutMs));
 
             foreach (var view in views)
             {
@@ -404,48 +484,132 @@ namespace TopDock
             // 어느 화면이든 볼륨은 우측 상태 점 자리의 링 하나로 말한다 —
             // 접힌 노치도 노치 전체가 계기로 바뀌지 않고 모양을 그대로 유지한다(볼륨바 대신 링).
             VolumeRing.Show(volumeVal, isMuted);
-            ShowVolumeRingOverlay();
-            // 어느 경로(휠·키보드)로 만져도 테두리 빛이 바를 물들이지 않게 한다.
-            UpdateBeamInteriorLight();
+
+            // 순서가 곧 뜻이다: 먼저 '볼륨을 만지는 중'이 되어야 링이 뜬다 — 링의 수명은
+            // 이 신호로 정해지므로, SyncAudioRing을 먼저 부르면 켜야 할 이유를 아직 모른다.
             StartHudTimer();
+            SyncAudioRing(animate: true);
+            // 어느 경로(휠·키보드)로 만져도 테두리 빛이 링을 물들이지 않게 한다.
+            UpdateBeamInteriorLight();
         }
 
         /// <summary>
-        /// 펼친 카드의 우측 상태 점 자리에 볼륨 링을 띄운다 — 이 자리는 볼륨의 자리다.
-        /// 진행바 자리를 빌리지 않으므로 재생 위치가 계속 보이고, 카드 높이·내용도 그대로다.
+        /// 이 자리의 주인 — 소리가 흐르는 동안 링이 상주하고, 볼륨을 만지는 동안은 늘 뜬다.
+        /// 비서 화면에서는 얼굴을 가리지 않게 언제나 비켜선다.
         /// </summary>
-        private void ShowVolumeRingOverlay()
-        {
-            if (_volumeRingOverlayVisible) return;
-            _volumeRingOverlayVisible = true;
+        private bool WantAudioRing =>
+            AudioSlot.ShowRing(_mediaPlaying, _volumeHudTimer?.IsEnabled == true)
+            && _currentViewMode is not (ViewMode.Assistant or ViewMode.AssistantCompact);
 
-            VolumeRing.Visibility = Visibility.Visible;
-            VolumeRing.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation { To = 1, Duration = new Duration(TimeSpan.FromMilliseconds(160)) });
+        /// <summary>상태 점이 이 자리를 쓰고 있는가 — 배터리·AI·복사 피드백이 모두 같은 자리다.</summary>
+        private bool StatusDotVisible =>
+            BatteryDot.Visibility == Visibility.Visible
+            || AssistantStatusChip.Visibility == Visibility.Visible
+            || ClipboardFeedbackChip.Visibility == Visibility.Visible;
+
+        /// <summary>
+        /// 소리 바늘 — 캡처가 자기 스레드에서 다듬어 둔 세 칸을 그대로 옮긴다.
+        /// 여기서 정하는 것은 보일지 여부뿐이다: 값이 없으면(캡처를 못 열었다) 바늘만 감추고
+        /// 호는 그대로 둔다. 계기가 없다고 볼륨 UI가 사라지면 안 된다.
+        /// </summary>
+        private void AudioBars_Tick(object? sender, EventArgs e)
+        {
+            bool hasLevels = _audioCapture.TryReadBars(_levelBars);
+            VolumeRing.BarsVisible = AudioSlot.ShowBars(_mediaPlaying, hasLevels, StatusDotVisible);
+
+            if (hasLevels)
+            {
+                VolumeRing.SetBars(_levelBars[0], _levelBars[1], _levelBars[2]);
+            }
         }
 
-        private void HideVolumeRingOverlay()
+        /// <summary>링을 지금의 의도에 맞춘다 — 등장·퇴장은 손짓과 함께, 모양 전환 중엔 즉시.</summary>
+        private void SyncAudioRing(bool animate)
+        {
+            if (!animate)
+            {
+                SettleAudioRing();   // 모양이 바뀌는 중엔 페이드가 모프와 섮여 보인다
+            }
+            else if (WantAudioRing)
+            {
+                ShowAudioRing();
+            }
+            else
+            {
+                HideAudioRing();
+            }
+        }
+
+        /// <summary>
+        /// 우측 상태 점 자리에 링을 띄운다 — 이 자리는 이제 링의 것이다.
+        /// 진행바 자리를 빌리지 않으므로 재생 위치가 계속 보이고, 카드 높이·내용도 그대로다.
+        /// </summary>
+        private void ShowAudioRing()
+        {
+            if (!_volumeRingOverlayVisible)
+            {
+                _volumeRingOverlayVisible = true;
+
+                // 재생 때문에 처음 뜨는 것이면 지금의 볼륨에서 시작한다 — 0에서 차오르면 값이 튄다
+                VolumeRing.Show(_audioService.GetCurrentVolume(out bool muted), muted);
+            }
+
+            VolumeRing.Visibility = Visibility.Visible;
+
+            // 링도 '툭' 켜지지 않고 앉는다 — 알림 내용과 같은 손짓(살짝 작은 자리에서 제 크기로).
+            // 링은 뜨는 즉시 값이 차오르므로 크기 변화는 아주 작게 둔다: 등장이 아니라 정착이다.
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.EaseOutExponent };
+            var dur = new Duration(TimeSpan.FromMilliseconds(Tokens.RingInMs));
+            Animate(VolumeRing, UIElement.OpacityProperty,
+                new DoubleAnimation { To = 1, Duration = dur, EasingFunction = ease });
+            AnimateRingScale(Tokens.RingInScale, 1, dur, ease);
+            UpdateBeamInteriorLight();
+        }
+
+        private void HideAudioRing()
         {
             if (!_volumeRingOverlayVisible) return;
             _volumeRingOverlayVisible = false;
 
-            var fade = new DoubleAnimation { To = 0, Duration = new Duration(TimeSpan.FromMilliseconds(160)) };
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = Tokens.EaseInExponent };
+            var dur = new Duration(TimeSpan.FromMilliseconds(Tokens.RingOutMs));
+            var fade = new DoubleAnimation { To = 0, Duration = dur, EasingFunction = ease };
             fade.Completed += (s, e) =>
             {
-                if (_volumeRingOverlayVisible) return;
+                // 사라지는 도중에 재생이 돌아올 수 있다 — 그때는 걷지 않고 그대로 둔다
+                if (WantAudioRing) return;
                 VolumeRing.Visibility = Visibility.Collapsed;
                 UpdateBeamInteriorLight();
             };
-            VolumeRing.BeginAnimation(UIElement.OpacityProperty, fade);
+            Animate(VolumeRing, UIElement.OpacityProperty, fade);
+            // 내용이 먼저 빠지는 알림 퇴장과 같은 방향 — 사라지기 전에 아주 살짝 잦아든다
+            AnimateRingScale(VolumeRingScale.ScaleX, Tokens.RingOutScale, dur, ease);
+            UpdateBeamInteriorLight();
         }
 
-        /// <summary>접히는 순간엔 애니메이션 없이 즉시 볼륨 링을 정리한다(크기 변화와 겹치면 어긋나 보인다).</summary>
-        private void ResetVolumeOverlays()
+        /// <summary>링의 크기를 지금 보이는 값에서 목표로 미끄러뜨린다(애니메이션 중이면 그 값에서 이어 간다).</summary>
+        private void AnimateRingScale(double from, double to, Duration duration, IEasingFunction ease)
         {
-            _volumeRingOverlayVisible = false;
+            Animate(VolumeRingScale, ScaleTransform.ScaleXProperty, new DoubleAnimation(from, to, duration) { EasingFunction = ease });
+            Animate(VolumeRingScale, ScaleTransform.ScaleYProperty, new DoubleAnimation(from, to, duration) { EasingFunction = ease });
+        }
+
+        /// <summary>
+        /// 링을 지금의 의도에 즉시 앉힌다(애니메이션 없이). 도크 모양이 바뀌는 순간에 쓴다 —
+        /// 페이드가 모프와 겹치면 어긋나 보인다. 재생 중이면 링은 그대로 남는다.
+        /// </summary>
+        private void SettleAudioRing()
+        {
+            bool visible = WantAudioRing;
+            _volumeRingOverlayVisible = visible;
+
             VolumeRing.BeginAnimation(UIElement.OpacityProperty, null);
-            VolumeRing.Opacity = 0;
-            VolumeRing.Visibility = Visibility.Collapsed;
+            VolumeRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            VolumeRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            VolumeRingScale.ScaleX = 1;
+            VolumeRingScale.ScaleY = 1;
+            VolumeRing.Opacity = visible ? 1 : 0;
+            VolumeRing.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
             UpdateBeamInteriorLight();
         }
@@ -459,27 +623,13 @@ namespace TopDock
                 {
                     _volumeHudTimer.Stop();
 
-                    HideVolumeRingOverlay();
+                    // 재생 중이면 링은 남고, 아니면 여기서 걷힌다
+                    SyncAudioRing(animate: true);
 
-                    // 볼륨을 만지는 동안엔 노치 크기를 건드리지 않는다(링만 뜬다) — 그래서 그 사이에
-                    // 마우스가 들어오거나 나간 일은 여기서 한 번만 반영한다. MouseEnter/MouseLeave가
-                    // HUD 때문에 미뤄 둔 것을 여기서 되돌리지 않으면 확장 노치가 그대로 남는다.
-                    if (NotchBorder.IsMouseOver)
-                    {
-                        // 만지는 동안 마우스가 올라와 있었으면 그때 확장 카드로 건네준다
-                        if (_currentViewMode is ViewMode.IdleCompact or ViewMode.MediaCompact)
-                        {
-                            _isExpanded = true;
-                            SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
-                        }
-                    }
-                    else if (_currentViewMode is ViewMode.IdleExpanded or ViewMode.MediaExpanded)
-                    {
-                        // 볼륨을 만지다 마우스가 벗어났다 — 미뤄 둔 접기를 여기서 끝낸다
-                        _isExpanded = false;
-                        SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
-                        CompactFace?.SetState(Controls.AiFace.FaceState.Idle);
-                    }
+                    // 볼륨을 만지는 동안엔 도크 크기를 건드리지 않는다(링만 뜬다) — 그래서 그 사이에
+                    // 마우스가 들어오거나 나간 일은 여기서 한 번만 반영한다. 이 되돌림이 없으면
+                    // HUD를 만지다 벗어난 마우스를 아무도 기억하지 못해 확장된 도크가 그대로 남는다.
+                    ApplyMode(_dock.VolumeHudExpired(Signals));
                 };
             }
             _volumeHudTimer.Stop();

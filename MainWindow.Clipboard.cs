@@ -1,4 +1,4 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
@@ -434,14 +434,12 @@ namespace TopDock
             ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
 
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 4 };
-            var fadeIn = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(130))) { EasingFunction = ease };
-            var popIn = new DoubleAnimation(0.65, 1, new Duration(TimeSpan.FromMilliseconds(240))) { EasingFunction = ease };
-            Timeline.SetDesiredFrameRate(fadeIn, 60);
-            Timeline.SetDesiredFrameRate(popIn, 60);
-            ClipboardFeedbackChip.BeginAnimation(UIElement.OpacityProperty, fadeIn);
-            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleXProperty, popIn);
-            ClipboardFeedbackScale.BeginAnimation(ScaleTransform.ScaleYProperty, popIn);
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.PopExponent };
+            var fadeIn = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(Tokens.FeedbackFadeInMs))) { EasingFunction = ease };
+            var popIn = new DoubleAnimation(Tokens.FeedbackPopFrom, 1, new Duration(TimeSpan.FromMilliseconds(Tokens.FeedbackPopMs))) { EasingFunction = ease };
+            Animate(ClipboardFeedbackChip, UIElement.OpacityProperty, fadeIn);
+            Animate(ClipboardFeedbackScale, ScaleTransform.ScaleXProperty, popIn);
+            Animate(ClipboardFeedbackScale, ScaleTransform.ScaleYProperty, popIn);
 
             // 가장자리 빛 펄스 — 복사된 것을 "빛으로" 알린다
             FlashNotchEdge();
@@ -458,16 +456,15 @@ namespace TopDock
 
         private void HideClipboardFeedback()
         {
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 3 };
-            var fade = new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = ease };
-            Timeline.SetDesiredFrameRate(fade, 60);
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = Tokens.EaseInExponent };
+            var fade = new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(Tokens.FeedbackFadeOutMs))) { EasingFunction = ease };
             fade.Completed += (s, e) =>
             {
                 // 그사이 또 복사됐으면 그대로 둔다
                 if (_clipboardToastTimer == null || !_clipboardToastTimer.IsEnabled)
                     ClipboardFeedbackChip.Visibility = Visibility.Collapsed;
             };
-            ClipboardFeedbackChip.BeginAnimation(UIElement.OpacityProperty, fade);
+            Animate(ClipboardFeedbackChip, UIElement.OpacityProperty, fade);
         }
 
         // 복사 알림 · 기록패널 (Ctrl+Shift+V)
@@ -494,6 +491,23 @@ namespace TopDock
         /// <summary>노치 본체 클릭 → 기록 열기/닫기. 확장 뷰의 버튼들은 자기 클릭을 먼저 처리한다.</summary>
         private void Notch_Click(object sender, MouseButtonEventArgs e)
         {
+            // 인박스를 보고 있으면 클릭은 다음 알림 — 노치는 포커스 없이도 손으로 넘길 수 있어야 한다
+            if (_inboxOpen)
+            {
+                MoveInboxSelection(1);
+                e.Handled = true;
+                return;
+            }
+
+            // 방금 뜲 Windows 알림을 클릭하면 그 알림의 기록으로 이어진다 — 사라지기 전의 마지막 손짓이다
+            // (볼륨·충전 같은 상태 피드백은 알림 기록과 다른 통로라 여기서 가로채지 않는다)
+            if (_activeNotice == NoticeSource.Windows && !_inbox.IsEmpty)
+            {
+                OpenNotificationInbox();
+                e.Handled = true;
+                return;
+            }
+
             // 대화 중·작업 중엔 입력을 가로채지 않는다 — 노치 클릭으로 기록 패널을 열지 않는다
             if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
             if (_clipboardHistory.Count == 0) return;
@@ -513,14 +527,15 @@ namespace TopDock
             // 먼저 배치해야 패널 실제 크기가 나온다 — 그 전에 계산하면 좌상단(0,0)에 붙는다
             ClipboardHistoryPanel.UpdateLayout();
             RepositionClipboardHistoryPanel();
-            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5 };
-            var dur = new Duration(TimeSpan.FromMilliseconds(280));
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.EaseOutExponent };
+            var dur = new Duration(TimeSpan.FromMilliseconds(Tokens.PanelOpenMs));
             var opacity = new DoubleAnimation(0, 1, dur) { EasingFunction = ease };
             var slide = new DoubleAnimation(-8, 0, dur) { EasingFunction = ease };
-            Timeline.SetDesiredFrameRate(opacity, 60);
-            Timeline.SetDesiredFrameRate(slide, 60);
-            ClipboardHistoryPanel.BeginAnimation(UIElement.OpacityProperty, opacity);
-            ClipboardHistoryTransform.BeginAnimation(TranslateTransform.YProperty, slide);
+            Animate(ClipboardHistoryPanel, UIElement.OpacityProperty, opacity);
+            Animate(ClipboardHistoryTransform, TranslateTransform.YProperty, slide);
+
+            // 상자가 방을 만든 뒤에 내용이 미끄러져 앉는다 — 알림 카드와 같은 손짓(같은 토큰)
+            PlayContentSettle(ClipboardHistoryRows, ClipboardRowsScale, ClipboardRowsSlide);
         }
 
         private void HideClipboardHistoryPanel()
@@ -528,7 +543,10 @@ namespace TopDock
             if (!_clipboardHistoryOpen) return;
             _clipboardHistoryOpen = false;
 
-            var dur = new Duration(TimeSpan.FromMilliseconds(200));
+            // 내용이 먼저 살짝 물러난다 — 빈 상자만 줄어드는 것보다 낫다
+            PlayContentExit(ClipboardHistoryRows, ClipboardRowsScale, ClipboardRowsSlide);
+
+            var dur = new Duration(TimeSpan.FromMilliseconds(Tokens.PanelCloseMs));
             var opacity = new DoubleAnimation(0, dur);
             opacity.Completed += (s, e) =>
             {
@@ -556,30 +574,15 @@ namespace TopDock
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // 이미지 항목은 썸네일로 — 캡처가 여러 장이어도 구분된다
-            BitmapSource? thumb = ThumbnailFor(item);
-            if (thumb != null)
-            {
-                var preview = new Image
-                {
-                    Source = thumb,
-                    Height = 30,
-                    MaxWidth = 48,
-                    Stretch = Stretch.Uniform,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 9, 0),
-                    IsHitTestVisible = false,
-                };
-                RenderOptions.SetBitmapScalingMode(preview, BitmapScalingMode.HighQuality);
-                Grid.SetColumn(preview, 0);
-                grid.Children.Add(preview);
-            }
+            grid.Children.Add(BuildClipboardTile(item));
 
+            // 읽을 것은 한 단계 크고 밝게 — 알림 카드의 제목과 같은 리듬(토큰의 제목 크기)
             var text = new TextBlock
             {
                 Text = ClipboardRowLabel(item),
-                Foreground = new SolidColorBrush(Color.FromArgb(0xE5, 0xFF, 0xFF, 0xFF)),
-                FontSize = 12,
+                Foreground = DesignTokens.InkPrimary,
+                FontSize = DesignTokens.FontTitleCompact,
+                FontWeight = DesignTokens.WeightSemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -590,8 +593,8 @@ namespace TopDock
             var remove = new TextBlock
             {
                 Text = "✕",
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
+                FontSize = 11,
+                Foreground = DesignTokens.IconMuted,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 2, 0),
                 Cursor = Cursors.Hand,
@@ -630,8 +633,85 @@ namespace TopDock
             return row;
         }
 
+        /// <summary>정체성 타일 한 칸의 크기·반경 — 알림 카드의 펼친 타일과 같은 값(토큰 한 곳에서 온다).</summary>
+        private const double ClipboardTileSize = DesignTokens.TileSizeRegular;
+        private static readonly CornerRadius ClipboardTileRadius = DesignTokens.TileRadiusRegular;
+
+        /// <summary>
+        /// 항목 하나의 정체성 타일 — 알림 카드의 앱 타일과 같은 자리·같은 모양이다.
+        ///
+        /// 캡처는 '무엇인지'가 곧 정체성이므로 그림을 그대로 타일에 앉히고,
+        /// 글자·파일은 종류를 첫 글자로 줄여 넣는다(텍·파) — 앱 이름을 '카·광'으로 줄이는 것과 같은 규칙.
+        /// </summary>
+        private Border BuildClipboardTile(ClipboardItem item)
+        {
+            var tile = new Border
+            {
+                Width = ClipboardTileSize,
+                Height = ClipboardTileSize,
+                CornerRadius = ClipboardTileRadius,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 9, 0),
+                IsHitTestVisible = false,
+            };
+            Grid.SetColumn(tile, 0);
+
+            BitmapSource? thumb = ThumbnailFor(item);
+            if (thumb != null)
+            {
+                var brush = new ImageBrush(thumb) { Stretch = Stretch.UniformToFill };
+                RenderOptions.SetBitmapScalingMode(tile, BitmapScalingMode.HighQuality);
+                tile.Background = brush;
+                // Border는 반경으로 자식·배경을 자르지 않는다 — 둥근 모서리 모양을 마스크로 씌운다
+                tile.OpacityMask = TileMaskBrush();
+                return tile;
+            }
+
+            var kind = ClipboardIdentity.Kind(item.IsImage, item.IsFiles);
+            tile.Background = TileBrush(kind);
+            tile.Child = new TextBlock
+            {
+                Text = ClipboardIdentity.TileText(kind),
+                Foreground = DesignTokens.InkPrimary,
+                FontSize = DesignTokens.FontMarkRegular,
+                FontWeight = DesignTokens.WeightBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, -1, 0, 0),
+            };
+            return tile;
+        }
+
+        /// <summary>타일의 둥근 모서리 모양 — 배경 그림을 같은 모양으로 잘라 낸다.</summary>
+        private static Brush TileMaskBrush() => new VisualBrush
+        {
+            Visual = new Border
+            {
+                Width = ClipboardTileSize,
+                Height = ClipboardTileSize,
+                CornerRadius = ClipboardTileRadius,
+                Background = Brushes.Black,
+            },
+        };
+
+        /// <summary>
+        /// 타일 색 — 복사 기록 안에서만 쓰는 '종류'의 색이다(글자=복사 파랑, 파일=주황, 이미지=보라).
+        /// 알림 카드의 색은 '왜 떴는가'(출처)를 말하고, 여기 색은 '무엇을 복사했는가'를 말한다 —
+        /// 두 화면은 한 번에 함께 보이지 않으므로 같은 팔레트를 나눠 쓴다(새 색을 만들지 않는다).
+        /// </summary>
+        private static Brush TileBrush(ClipboardKind kind) => kind switch
+        {
+            ClipboardKind.Files => DesignTokens.AccentTool,
+            ClipboardKind.Image => DesignTokens.AccentThink,   // 썸네일을 못 만든 이미지만
+            _ => DesignTokens.AccentInfo,
+        };
+
+        /// <summary>토큰 색을 알파만 낮춰 쓰는 파생 브러시 — 같은 파랑을 두 번 적지 않기 위한 것.</summary>
+        private static Brush Alpha(Color color, byte alpha) => DesignTokens.Frozen(
+            Color.FromArgb(alpha, color.R, color.G, color.B));
+
         private static readonly Brush HoverRowBrush = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
-        private static readonly Brush SelectedRowBrush = new SolidColorBrush(Color.FromArgb(0x33, 0x0A, 0x84, 0xFF));
+        private static readonly Brush SelectedRowBrush = Alpha(DesignTokens.AccentInfoColor, 0x33);
 
         private void ClipboardHistoryRow_Click(object sender, MouseButtonEventArgs e)
         {

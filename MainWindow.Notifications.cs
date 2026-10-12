@@ -86,8 +86,8 @@ namespace TopDock
             }
 
             Color accent = _batteryLevel == BatteryLevel.Charging
-                ? Color.FromRgb(0x34, 0xC7, 0x59)   // 충전 중 — 애플 그린
-                : Color.FromRgb(0xFF, 0x45, 0x3A);  // 배터리 부족 — 애플 레드
+                ? DesignTokens.AccentChargingColor   // 충전 중 — 애플 그린
+                : DesignTokens.AccentLowColor;       // 배터리 부족 — 애플 레드
 
             var core = new SolidColorBrush(accent);
             core.Freeze();
@@ -181,10 +181,14 @@ namespace TopDock
         // Windows 알림 · 도구 실행 · AI 상태가 모두 같은 통로(알림 뷰)로 노치에 뜬다.
         // 복사 피드백(작은 배지)은 조용한 마이크로 피드백이라 이 통로를 쓰지 않는다.
 
-        private static readonly Color NoticeInfo = Color.FromRgb(0x0A, 0x84, 0xFF);   // Windows 알림 — 기존 파랑
-        private static readonly Color NoticeTool = Color.FromRgb(0xFF, 0x9F, 0x0A);   // 도구 실행 — 앰버
-        private static readonly Color NoticeThink = Color.FromRgb(0xBF, 0x5A, 0xF2);  // AI 사고·응답 중 — 퍼플
-        private static readonly Color NoticeCharging = Color.FromRgb(0x34, 0xC7, 0x59); // 충전 연결 — 그린
+        // 색은 한 곳(DesignTokens)에서 온다 — 같은 파랑을 화면마다 새로 적지 않는다.
+        private static readonly Color NoticeInfo = DesignTokens.AccentInfoColor;         // Windows 알림
+        private static readonly Color NoticeTool = DesignTokens.AccentToolColor;         // 도구 실행
+        private static readonly Color NoticeThink = DesignTokens.AccentThinkColor;       // AI 사고·응답 중
+        private static readonly Color NoticeCharging = DesignTokens.AccentChargingColor; // 충전 연결
+
+        /// <summary>알림 파랑 — 인박스 카드도 같은 색을 쓴다(둘은 같은 알림의 두 순간이다).</summary>
+        private static readonly Brush NoticeInfoBrush = DesignTokens.AccentInfo;
 
         /// <summary>지금 떠 있는 알림의 출처 — AI·도구 알림이 서로를 잘못 걷지 않게 구분한다.</summary>
         private enum NoticeSource { None, Windows, Tool, Assistant, Charging }
@@ -215,12 +219,27 @@ namespace TopDock
             var brush = new SolidColorBrush(accent);
             brush.Freeze();
 
+            // 앱에서 온 알림은 앱 타일(이름 첫 글자)로 정체성을 만들고, AI·도구·충전은 앱이 아니라
+            // "지금 벌어지는 일"이라 글리프가 맞다 — 같은 자리를 나눠 쓴다.
+            bool appNotice = source == NoticeSource.Windows;
+            string monogram = appNotice ? NoticeIdentity.Monogram(label) : string.Empty;
+            Visibility tile = appNotice ? Visibility.Visible : Visibility.Collapsed;
+            Visibility glyph = appNotice ? Visibility.Collapsed : Visibility.Visible;
+
+            NotifCompactChip.Visibility = tile;
+            NotifCompactChip.Background = brush;
+            NotifCompactChipText.Text = monogram;
+            NotifCompactIcon.Visibility = glyph;
             NotifCompactIcon.Data = icon;
             NotifCompactIcon.Fill = brush;
             NotifCompactAppText.Text = label;
             NotifCompactAppText.Foreground = brush;
             NotifCompactTitleText.Text = title;
 
+            NotifExpandedChip.Visibility = tile;
+            NotifExpandedChip.Background = brush;
+            NotifExpandedChipText.Text = monogram;
+            NotifExpandedIcon.Visibility = glyph;
             NotifExpandedIcon.Data = icon;
             NotifExpandedIcon.Fill = brush;
             NotifExpandedAppText.Text = label;
@@ -232,7 +251,9 @@ namespace TopDock
             if (_currentViewMode is not (ViewMode.NotificationCompact or ViewMode.NotificationExpanded))
                 _viewModeBeforeNotification = _currentViewMode;
 
-            SwitchViewMode(_isExpanded ? ViewMode.NotificationExpanded : ViewMode.NotificationCompact);
+            // 알림이 떠 있는 동안의 모양은 알림 모양이다 (펼쳐져 있으면 본문까지 보여준다)
+            ApplyMode(_dock.Resolve(Signals));
+            PlayNoticeEntrance();
 
             // 살아있는 가장자리 — 무슨 일이 일어났다는 빛의 신호
             if (flashEdge) FlashNotchEdge();
@@ -246,6 +267,109 @@ namespace TopDock
             }
             // duration이 null이면 다음 알림/해제까지 유지된다 — 사고·도구 실행처럼
             // 끝나는 시점을 모르는 상태는 눈에서 사라졌다 나타나지 않고 계속 떠 있어야 한다
+        }
+
+        // ── 알림 내용의 등장과 퇴장 ──
+        // 도크(상자)는 모프로 자리를 만들고, 내용은 아주 짧게 미끄러져 그 자리에 앉는다.
+        // 둘이 같은 프레임에 나타나면 상자가 툭 튀어나온 것처럼 보인다 — 조금 기다렸다(90ms) 출발한다.
+
+        /// <summary>알림 내용이 자리를 잡고 들어온다 — 빈 카드에 글자가 툭 박히지 않게.</summary>
+        private void PlayNoticeEntrance()
+        {
+            switch (_currentViewMode)
+            {
+                case ViewMode.NotificationCompact:
+                    PlayContentSettle(NotificationCompactView, NotifCompactScale, NotifCompactSlide);
+                    break;
+                case ViewMode.NotificationExpanded:
+                    PlayContentSettle(NotificationExpandedView, NotifExpandedScale, NotifExpandedSlide);
+                    break;
+            }
+        }
+
+        /// <summary>걷히기 전에 내용부터 살짝 물러난다 — 빈 상자만 줄어드는 것보다 낫다.</summary>
+        private void PlayNoticeExit()
+        {
+            switch (_currentViewMode)
+            {
+                case ViewMode.NotificationCompact:
+                    PlayContentExit(NotificationCompactView, NotifCompactScale, NotifCompactSlide);
+                    break;
+                case ViewMode.NotificationExpanded:
+                    PlayContentExit(NotificationExpandedView, NotifExpandedScale, NotifExpandedSlide);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 내용 한 덩어리를 상자 안에서 짧게 움직여 앉힌다 — 알림과 인박스가 같이 쓰는 손짓이라
+        /// 한 곳에 둔다. 화면마다 다른 리듬으로 움직이면 앱이 아니라 기능 모음처럼 보인다.
+        /// </summary>
+        /// <summary>
+        /// 정착 손짓 — 상자가 자리를 만든 뒤 내용이 미끄러져 앉는다. 알림 · 인박스 · 클립보드 · 비서가
+        /// 모두 이 하나를 쓴다: 화면마다 리듬이 다르면 앱이 아니라 기능 모음처럼 보인다.
+        /// </summary>
+        private static void PlayContentSettle(UIElement view, ScaleTransform? scale, TranslateTransform? slide)
+            => PlayContentEntrance(view, scale, slide,
+                Tokens.EntranceScale, Tokens.EntranceSlideY, Tokens.EntranceMs, Tokens.EntranceDelayMs);
+
+        /// <summary>방향대로 넘기는 손짓 — 기다리지 않고 곧바로, 크기 변화 없이 미끄러지기만 한다.</summary>
+        private static void PlayContentSlide(UIElement view, TranslateTransform slide, int direction)
+            => PlayContentEntrance(view, null, slide, 1, direction >= 0 ? 9 : -9, Tokens.QuickSlideMs, 0);
+
+        private static void PlayContentEntrance(UIElement view, ScaleTransform? scale, TranslateTransform? slide,
+            double fromScale, double fromY, int durationMs, int delayMs)
+        {
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = Tokens.EaseOutExponent };
+            var duration = new Duration(TimeSpan.FromMilliseconds(durationMs));
+            TimeSpan? begin = delayMs > 0 ? TimeSpan.FromMilliseconds(delayMs) : null;
+
+            // 지금 보이는 불투명도에서 출발한다 — 떠 있던 알림의 내용을 새 알림이 갈아끼울 때
+            // 0에서 다시 시작하면 글자가 잠깐 사라져 깜빡인다.
+            double opacity = view.Opacity;
+            view.BeginAnimation(UIElement.OpacityProperty, null);
+            view.Opacity = opacity;
+            Animate(view, UIElement.OpacityProperty, new DoubleAnimation(opacity, 1, duration)
+            {
+                BeginTime = begin,
+                EasingFunction = ease,
+            });
+
+            // 기다리는 동안에는 '출발 자리'에 서 있어야 한다 — 기준값을 그 자리로 옮겨 두고 애니메이션을 건다
+            // (기준값을 그대로 두면 기다리는 90ms 동안 제자리에 있다가 나타나면서 튄다).
+            if (scale != null)
+            {
+                scale.ScaleX = fromScale;
+                scale.ScaleY = fromScale;
+                Animate(scale, ScaleTransform.ScaleXProperty, new DoubleAnimation(fromScale, 1, duration) { BeginTime = begin, EasingFunction = ease });
+                Animate(scale, ScaleTransform.ScaleYProperty, new DoubleAnimation(fromScale, 1, duration) { BeginTime = begin, EasingFunction = ease });
+            }
+
+            if (slide != null)
+            {
+                slide.Y = fromY;
+                Animate(slide, TranslateTransform.YProperty, new DoubleAnimation(fromY, 0, duration) { BeginTime = begin, EasingFunction = ease });
+            }
+        }
+
+        /// <summary>내용이 물러난다 — 상자가 곧 줄어들 것이므로 아주 조금만 움직인다.</summary>
+        private static void PlayContentExit(UIElement view, ScaleTransform scale, TranslateTransform slide)
+        {
+            var ease = new ExponentialEase { EasingMode = EasingMode.EaseIn, Exponent = Tokens.EaseInExponent };
+            var duration = new Duration(TimeSpan.FromMilliseconds(Tokens.ExitMs));
+
+            // 지금 값을 읽어 출발점으로 삼는다 — 기준값(출발 자리)에 끌려가면 나타날 때 자리로 튄다
+            Animate(view, UIElement.OpacityProperty, new DoubleAnimation(0, duration) { EasingFunction = ease });
+            Animate(scale, ScaleTransform.ScaleXProperty, new DoubleAnimation(scale.ScaleX, Tokens.ExitScale, duration) { EasingFunction = ease });
+            Animate(scale, ScaleTransform.ScaleYProperty, new DoubleAnimation(scale.ScaleY, Tokens.ExitScale, duration) { EasingFunction = ease });
+            Animate(slide, TranslateTransform.YProperty, new DoubleAnimation(slide.Y, Tokens.ExitSlideY, duration) { EasingFunction = ease });
+        }
+
+        /// <summary>애니메이션은 60fps로 — 기본값은 화면 주사율을 따라가지 못해 모프 중에 끊겨 보인다.</summary>
+        private static void Animate(IAnimatable target, DependencyProperty property, DoubleAnimation animation)
+        {
+            Timeline.SetDesiredFrameRate(animation, Tokens.FrameRate);
+            target.BeginAnimation(property, animation);
         }
 
         /// <summary>도구가 실제로 하는 일을 한 줄로 — 인자까지는 알 수 없으니 동작만 말한다.</summary>
@@ -295,6 +419,8 @@ namespace TopDock
             // 사용자가 그새 다른 화면으로 갔으면 알림 화면이 아니다 — 건드리지 않는다
             if (_currentViewMode is not (ViewMode.NotificationCompact or ViewMode.NotificationExpanded)) return;
 
+            PlayNoticeExit();
+
             ViewMode back = _viewModeBeforeNotification;
             _viewModeBeforeNotification = ViewMode.IdleCompact;
 
@@ -312,14 +438,11 @@ namespace TopDock
                     SwitchViewMode(ViewMode.AssistantCompact);
                     return;
                 }
-                SwitchViewMode(_isExpanded
-                    ? (HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded)
-                    : (HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact));
+                SyncViewMode();
                 return;
             }
-            SwitchViewMode(_isExpanded
-                ? (HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded)
-                : (HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact));
+            // 알림이 걷혔으니 평소 모양으로 (볼륨 HUD가 떠 있으면 그쪽이 끝날 때 반영한다)
+            SyncViewMode();
         }
 
         private DispatcherTimer NewNotificationTimer()
@@ -333,13 +456,19 @@ namespace TopDock
         {
             Dispatcher.Invoke(() =>
             {
+                string title = string.IsNullOrEmpty(e.Title) ? e.Body : e.Title;
+
+                // 기록은 노치 표시 여부와 상관없이 남긴다 — 노치 알림을 꺼 둔 사용자에게는
+                // 인박스가 알림을 보는 유일한 통로이고, 켜 둔 사용자에게도 5초 뒤 걷힌 것을 되찾는 길이다.
+                RecordNotification(e.AppName, title, e.Body);
+
                 if (!ConfigService.Current.ShowNotifications) return;
 
                 ShowNotchNotice(
                     icon: IconBell,
                     accent: NoticeInfo,
                     label: e.AppName,
-                    title: string.IsNullOrEmpty(e.Title) ? e.Body : e.Title,
+                    title: title,
                     body: e.Body,
                     duration: TimeSpan.FromSeconds(5),
                     source: NoticeSource.Windows);

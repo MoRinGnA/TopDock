@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -23,8 +23,8 @@ namespace TopDock
             // 다크 UI 위에 과하게 번쩍이던 것을 조금 가라앉힌다(다른 상태는 그대로).
             double strength = 1.0;
 
-            // 이퀄라이저 바도 같은 곡의 색 — 한 곡 안에서는 테두리와 바가 같은 색을 쓴다
-            UpdateEqualizerAccent(track ? (_albumColor ?? ColorFromKey(_lastMediaKey)) : EqualizerIdleColor);
+            // 링 안의 바늘도 같은 곡의 색 — 한 곡 안에서는 테두리 빛과 바늘이 같은 색을 쓴다
+            UpdateAudioBarsAccent(track ? (_albumColor ?? ColorFromKey(_lastMediaKey)) : AudioBarsIdleColor);
 
             if (_orbCentral)
             {
@@ -71,7 +71,7 @@ namespace TopDock
             {
                 // 충전 피드백 동안에만 초록 단색. Form·Speed·Strength와 평소 상태 로직은 그대로 둔다.
                 NotchBeam.Tint = Controls.BeamTint.Mono;
-                NotchBeam.AccentColor = Color.FromRgb(0x34, 0xC7, 0x59);
+                NotchBeam.AccentColor = DesignTokens.AccentChargingColor;
             }
             NotchBeam.Strength = strength;
 
@@ -95,7 +95,7 @@ namespace TopDock
             flash.KeyFrames.Add(new EasingDoubleKeyFrame(peak, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(380))));
             flash.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(totalMs)))
             { EasingFunction = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 2 } });
-            Timeline.SetDesiredFrameRate(flash, 60);
+            Timeline.SetDesiredFrameRate(flash, Tokens.FrameRate);
             NotchBeam.BeginAnimation(Controls.BorderBeam.FlashProperty, flash);
         }
 
