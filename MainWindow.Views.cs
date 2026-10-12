@@ -461,11 +461,24 @@ namespace TopDock
 
                     HideVolumeRingOverlay();
 
-                    // 볼륨을 만지는 동안 마우스가 올라와 있었으면 그때 확장 카드로 건네준다
-                    // (만지는 동안엔 크기를 바꾸지 않으므로 여기서 한 번만 바꾼다).
-                    if (NotchBorder.IsMouseOver && _currentViewMode is ViewMode.IdleCompact or ViewMode.MediaCompact)
+                    // 볼륨을 만지는 동안엔 노치 크기를 건드리지 않는다(링만 뜬다) — 그래서 그 사이에
+                    // 마우스가 들어오거나 나간 일은 여기서 한 번만 반영한다. MouseEnter/MouseLeave가
+                    // HUD 때문에 미뤄 둔 것을 여기서 되돌리지 않으면 확장 노치가 그대로 남는다.
+                    if (NotchBorder.IsMouseOver)
                     {
-                        SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
+                        // 만지는 동안 마우스가 올라와 있었으면 그때 확장 카드로 건네준다
+                        if (_currentViewMode is ViewMode.IdleCompact or ViewMode.MediaCompact)
+                        {
+                            _isExpanded = true;
+                            SwitchViewMode(HasMedia ? ViewMode.MediaExpanded : ViewMode.IdleExpanded);
+                        }
+                    }
+                    else if (_currentViewMode is ViewMode.IdleExpanded or ViewMode.MediaExpanded)
+                    {
+                        // 볼륨을 만지다 마우스가 벗어났다 — 미뤄 둔 접기를 여기서 끝낸다
+                        _isExpanded = false;
+                        SwitchViewMode(HasMedia ? ViewMode.MediaCompact : ViewMode.IdleCompact);
+                        CompactFace?.SetState(Controls.AiFace.FaceState.Idle);
                     }
                 };
             }
