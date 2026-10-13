@@ -23,7 +23,7 @@ namespace TopDock
         /// 일반 상태는 숨기고, 접힌 화면에는 작은 상태 점을, 펼친 화면에는 퍼센트를 보여준다.</summary>
         private void BatteryService_BatteryStatusChanged(object? sender, BatteryStatusArgs e)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 _batteryPercent = e.BatteryPercent;
 
@@ -166,7 +166,9 @@ namespace TopDock
             StopBatteryPulse();
             _pulsingDot = dot;
             dot.Opacity = 1;
-            dot.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
+            // 무한 반복은 기본값이면 화면 주사율만큼 돈다 — 1.8초짜리 숨쉬기에는 20장이면 충분하고,
+            // 그만큼 창 전체 합성이 줄어든다(AiFace.IdleAnimationFps와 같은 이유).
+            var pulse = new DoubleAnimation
             {
                 From = 0.45,
                 To = 1.0,
@@ -174,7 +176,9 @@ namespace TopDock
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
                 EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-            });
+            };
+            Timeline.SetDesiredFrameRate(pulse, Tokens.IdlePulseFps);
+            dot.BeginAnimation(UIElement.OpacityProperty, pulse);
         }
 
         // ── 노치 알림 ──
@@ -387,6 +391,8 @@ namespace TopDock
         private void ShowThinkingNotice()
         {
             if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
+            // 이미 끝난 턴의 늦은 이벤트는 알림을 띄우지 않는다 — 아래 ClearTurnNotices의 짝이다.
+            if (!_assistantBusy) return;
             ShowNotchNotice(IconSparkle, NoticeThink, "AI", "생각 중…", null,
                 null, NoticeSource.Assistant);
         }
@@ -395,8 +401,23 @@ namespace TopDock
         {
             // 비서 화면이나 아일랜드가 이미 진행 중임을 보여준다 — 노치를 빼앗지 않는다
             if (_currentViewMode is ViewMode.Assistant or ViewMode.AssistantCompact) return;
+            if (!_assistantBusy) return;
             ShowNotchNotice(IconGear, NoticeTool, "실행", ToolNoticeText(toolName), null,
                 null, NoticeSource.Tool);
+        }
+
+        /// <summary>
+        /// 비서 한 턴이 띄운 알림을 걷는다. 생각·실행 알림은 그 턴에 속한 것이라 턴이 끝나면 함께 간다.
+        ///
+        /// 왜 필요한가: 도구는 취소 토큰을 대개 보지 않으므로(AssistantTools), 사용자가 Esc로 요청을
+        /// 취소한 뒤에도 ToolFinished가 늦게 도착한다. 그때 가드가 없으면 스티키 알림("생각 중…")이
+        /// 뒤늦게 떠서, 그 턴은 이미 끝났는데도 노치가 그 카드에 붙잡힌다 — 알림이 떠 있는 동안
+        /// DockSignals.NoticeActive가 계속 참이라 대기·미디어 화면으로 돌아가지 못하고, 사용자가
+        /// 직접 걷을 방법도 없다(노치 클릭은 인박스·기록만 연다).
+        /// </summary>
+        private void ClearTurnNotices()
+        {
+            if (_activeNotice is NoticeSource.Assistant or NoticeSource.Tool) ClearNotchNotice();
         }
 
         // AI 완료는 별도 화면을 띄우지 않는다 — 배터리 점과 같은 자리의 상태 점이 초록으로
@@ -454,7 +475,7 @@ namespace TopDock
 
         private void NotificationService_NotificationReceived(object? sender, NotificationEventArgs e)
         {
-            Dispatcher.Invoke(() =>
+            RunOnUi(() =>
             {
                 string title = string.IsNullOrEmpty(e.Title) ? e.Body : e.Title;
 

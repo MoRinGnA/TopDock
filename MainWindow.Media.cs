@@ -15,7 +15,7 @@ namespace TopDock
     {
         private void MediaService_MediaChanged(MediaMetadata? media)
         {
-            Dispatcher.Invoke(async () =>
+            RunOnUi(async () =>
             {
                 if (media == null || string.IsNullOrWhiteSpace(media.Title))
                 {
@@ -112,7 +112,7 @@ namespace TopDock
                 {
                     if (bmp.PixelWidth >= 48 && bmp.PixelHeight >= 48 && !IsLikelyFavicon(bmp))
                     {
-                        Dispatcher.Invoke(() =>
+                        RunOnUi(() =>
                         {
                             if (_lastMediaKey == expectedKey)
                             {
@@ -163,18 +163,12 @@ namespace TopDock
 
         private void MediaService_PlaybackStatusChanged(bool isPlaying)
         {
-            Dispatcher.Invoke(() =>
-            {
-                UpdatePlaybackState(isPlaying);
-            });
+            RunOnUi(() => UpdatePlaybackState(isPlaying));
         }
 
         private void MediaService_TimelineChanged(TimeSpan position, TimeSpan duration)
         {
-            Dispatcher.Invoke(() =>
-            {
-                UpdateTimelineDisplay(position, duration);
-            });
+            RunOnUi(() => UpdateTimelineDisplay(position, duration));
         }
 
         private void UpdatePlaybackState(bool isPlaying)
@@ -217,8 +211,9 @@ namespace TopDock
                 _audioCapture.Stop();
 
                 // 바늘을 즉시 바닥에 놓는다 — 멈춘 곡의 마지막 소리가 바가에 남아 있으면 안 된다
+                // (BarsVisible을 먼저 내리므로 ResetBars를 쓴다: SetBars는 이 상태에서 조기 반환한다)
                 VolumeRing.BarsVisible = false;
-                VolumeRing.SetBars(0, 0, 0);
+                VolumeRing.ResetBars();
             }
 
             SyncAudioRing(animate: true);

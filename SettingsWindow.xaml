@@ -163,6 +163,12 @@
                 <TextBlock x:Name="TopMarginValueText" Text="8" FontSize="13" FontWeight="SemiBold"
                            Foreground="#FFFFFF" Margin="10,0,0,0" VerticalAlignment="Center" Width="30"/>
             </StackPanel>
+            <TextBlock Text="표시할 모니터" FontSize="12" Foreground="#8E8E93" Margin="0,2,0,4"/>
+            <TextBlock Text="‘주 모니터’는 주 화면이 바뀌면 따라갑니다. 모니터를 고르면 그 화면에 계속 앉고,
+                             그 모니터가 빠지면 주 모니터로 물러섭니다."
+                       FontSize="11" Foreground="#8E8E93" TextWrapping="Wrap" Margin="0,0,0,4"/>
+            <ComboBox x:Name="DockScreenCombo" Style="{StaticResource DarkCombo}" Width="300"
+                      HorizontalAlignment="Left" Margin="0,0,0,6"/>
 
             <!-- AI 비서 -->
             <TextBlock Text="AI 비서" FontSize="13" FontWeight="Bold" Foreground="#0A84FF" Margin="0,8,0,6"/>

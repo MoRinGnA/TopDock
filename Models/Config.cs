@@ -10,6 +10,11 @@ namespace TopDock.Models
         [JsonPropertyName("topMargin")]
         public double TopMargin { get; set; } = 8;
 
+        // 노치를 앉힐 모니터. "primary"(기본, 주 모니터) 또는 장치 이름(예: "\\.\DISPLAY2").
+        // 없는 모니터를 가리키면 주 모니터로 물러선다 — 노치가 화면 밖에서 사라지는 일은 없다.
+        [JsonPropertyName("dockScreen")]
+        public string DockScreen { get; set; } = "primary";
+
         [JsonPropertyName("showNotifications")]
         public bool ShowNotifications { get; set; } = true;
 

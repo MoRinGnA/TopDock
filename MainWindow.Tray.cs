@@ -10,11 +10,43 @@ namespace TopDock
         /// <summary>트레이 메뉴의 알림 기록 항목 — 안 읽은 개수를 여기에 붙인다.</summary>
         private System.Windows.Forms.ToolStripMenuItem? _trayInboxItem;
 
+        /// <summary>트레이에 걸린 그림. NotifyIcon은 자기 Icon을 정리하지 않으므로 따로 들고 있다가 걷는다.</summary>
+        private System.Drawing.Icon? _trayIconImage;
+
+        /// <summary>
+        /// 트레이 아이콘 — 노치 실루엣 그대로(Assets/topdock.ico, 실행 파일 아이콘과 같은 그림).
+        ///
+        /// 예전에는 윈도우 기본 아이콘을 썼다: 트레이에 남의 앱이 하나 늘어난 것처럼 보였고,
+        /// 그 아이콘은 이 앱이 무엇인지 아무것도 말하지 않았다. 리소스를 못 읽으면(패키징 사고)
+        /// 기본 아이콘으로 물러선다 — 트레이 아이콘이 없어서 창을 다시 열 수 없게 되는 일은 없다.
+        /// </summary>
+        private static System.Drawing.Icon LoadAppIcon()
+        {
+            try
+            {
+                var resource = System.Windows.Application.GetResourceStream(
+                    new Uri("pack://application:,,,/Assets/topdock.ico"));
+                if (resource != null)
+                {
+                    using var stream = resource.Stream;
+                    // 16px는 트레이의 실제 크기다 — 아이콘 파일의 여러 크기 중 가장 가까운 것을 고른다
+                    return new System.Drawing.Icon(stream, new System.Drawing.Size(16, 16));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Tray icon load failed: {ex.Message}");
+            }
+            // SystemIcons의 아이콘은 공용이라 우리가 정리하면 안 된다 — 복제해서 우리 것으로 만든다
+            return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
+        }
+
         private void InitializeTrayIcon()
         {
+            _trayIconImage = LoadAppIcon();
             _trayIcon = new System.Windows.Forms.NotifyIcon
             {
-                Icon = System.Drawing.SystemIcons.Application,
+                Icon = _trayIconImage,
                 Visible = true,
                 Text = "TopDock"
             };
@@ -28,7 +60,7 @@ namespace TopDock
             contextMenu.Items.Add("설정", null, (s, e) => OpenSettings());
 
             _trayInboxItem = new System.Windows.Forms.ToolStripMenuItem("알림 기록", null,
-                (s, e) => Dispatcher.Invoke(OpenNotificationInbox));
+                (s, e) => RunOnUi(OpenNotificationInbox));
             contextMenu.Items.Add(_trayInboxItem);
 
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
@@ -66,16 +98,17 @@ namespace TopDock
         {
             var cfg = ConfigService.Current;
 
-            // AI 비서 핫키 등록 상태를 설정과 동기화
+            // 핫키를 지금 설정에 맞게 다시 건다 — 형제를 함께 내렸다 함께 올려야 한다.
+            // (예전에는 클립보드 핫키를 내리고 비서 핫키만 다시 걸어서, 설정을 한 번 적용하면
+            //  Ctrl+Shift+V가 영영 듣지 않았다. 핫키는 아이디별로 한 번만 등록되므로
+            //  되올리지 않은 쪽은 그대로 죽는다.)
+            // 그리고 걸어 놓기만 하고 끝내지 않는다 — 시작 상태와 견주어 죽은 자리를 로그에 남긴다.
+            // 이 회귀는 화면에 아무 흔적을 남기지 않아서, 로그가 없으면 아무도 모른다.
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
             if (hwnd != IntPtr.Zero)
             {
-                UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
-                UnregisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD);
-                if (cfg.AssistantEnabled)
-                {
-                    RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
-                }
+                var after = RegisterGlobalHotkeys(hwnd);
+                LogHotkeyAudit(_hotkeyAtStart, after, ConfigService.Current.AssistantEnabled);
             }
 
             UpdatePosition();
@@ -99,8 +132,12 @@ namespace TopDock
 
         private void TrayExit_Click()
         {
-            _trayIcon!.Visible = false;
-            _trayIcon.Dispose();
+            // 정리는 MainWindow_Closed가 한 곳에서 맡는다 — 여기서는 아이콘만 먼저 숨긴다
+            // (트레이에 유령 아이콘이 남는 시간을 줄이기 위해)
+            if (_trayIcon != null)
+            {
+                _trayIcon.Visible = false;
+            }
             System.Windows.Application.Current.Shutdown();
         }
 

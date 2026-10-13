@@ -87,11 +87,15 @@ namespace TopDock.Services
             var (cleanTitle, cleanArtist, subTitle, subArtist) = ParseTitleAndArtistFull(rawTitle, rawArtist);
             string cacheKey = $"{cleanArtist.ToLowerInvariant()}:::{cleanTitle.ToLowerInvariant()}";
 
-            if (TryGetCached(cacheKey, out var cached)) return cached;
+            if (await TryGetCachedAsync(cacheKey).ConfigureAwait(false) is { } cached) return cached;
 
-            _currentCts?.Cancel();
-            _currentCts = new CancellationTokenSource();
-            var ct = _currentCts.Token;
+            // 이 조회의 토큰은 이 조회만 쓴다. 이전 조회는 취소만 하고, CTS 정리는 각자 자기 finally가 한다 —
+            // 교체 시점에 남의 CTS를 Dispose하면 아직 살아 있는 그 조회의 토큰 등록(HttpClient의 취소
+            // 콜백)이 깨진다. 취소만 해 두면 그 조회는 곧 OperationCanceledException으로 빠져나간다.
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource? previous = System.Threading.Interlocked.Exchange(ref _currentCts, cts);
+            previous?.Cancel();
+            CancellationToken ct = cts.Token;
 
             try
             {
@@ -129,6 +133,13 @@ namespace TopDock.Services
             catch (Exception ex)
             {
                 Log.Warn($"Lyrics fetch failed: {cleanArtist} - {cleanTitle} ({ex.Message})");
+            }
+            finally
+            {
+                // 다 쓴 CTS는 자기 자리에서 정리한다(취소된 CTS도 커널 대기 핸들을 쥐고 있다).
+                // 아직 내가 최신이면 비워 둔다 — 다음 조회가 자기 것을 넣는다.
+                System.Threading.Interlocked.CompareExchange(ref _currentCts, null, cts);
+                cts.Dispose();
             }
 
             return null;
@@ -305,20 +316,19 @@ namespace TopDock.Services
 
         // ────────────────────────── 캐시 ──────────────────────────
 
-        private bool TryGetCached(string cacheKey, out LyricsResult result)
+        /// <summary>
+        /// 캐시 조회. 디스크 쪽은 비동기로 읽는다 — 예전에는 곡이 바뀔 때마다 UI 스레드가 파일을
+        /// 통째로 읽고 JSON을 파싱했다(캐시 히트 경로라 대개 빠르지만, 느린 디스크에서는 그만큼 화면이 멈춘다).
+        /// </summary>
+        private async Task<LyricsResult?> TryGetCachedAsync(string cacheKey)
         {
-            if (_memoryCache.TryGetValue(cacheKey, out result!)) return true;
+            if (_memoryCache.TryGetValue(cacheKey, out LyricsResult? hit)) return hit;
 
-            var fromDisk = LoadFromDiskCache(cacheKey);
-            if (fromDisk != null)
-            {
-                _memoryCache[cacheKey] = fromDisk;
-                result = fromDisk;
-                return true;
-            }
+            LyricsResult? fromDisk = await LoadFromDiskCacheAsync(cacheKey).ConfigureAwait(false);
+            if (fromDisk == null) return null;
 
-            result = null!;
-            return false;
+            _memoryCache[cacheKey] = fromDisk;
+            return fromDisk;
         }
 
         private void StoreInCache(string cacheKey, LyricsResult result)
@@ -368,14 +378,15 @@ namespace TopDock.Services
             catch (Exception ex) { Log.Warn($"Lyrics cache cleanup failed: {ex.Message}"); }
         }
 
-        private static LyricsResult? LoadFromDiskCache(string cacheKey)
+        private static async Task<LyricsResult?> LoadFromDiskCacheAsync(string cacheKey)
         {
             try
             {
                 string path = GetDiskCachePath(cacheKey);
                 if (!File.Exists(path)) return null;
 
-                var dto = JsonSerializer.Deserialize<DiskCacheDto>(File.ReadAllText(path), CacheJsonOptions);
+                string json = await File.ReadAllTextAsync(path).ConfigureAwait(false);
+                var dto = JsonSerializer.Deserialize<DiskCacheDto>(json, CacheJsonOptions);
 
                 // 버전이 다른 캐시는 버린다 — 예전 매칭 로직이 남긴 잘못된 결과를 물려받지 않기 위해
                 // 버전이 다른 캐시는 버리고 파일도 지운다 — 예전 매칭 로직이 남긴 결과가
@@ -658,8 +669,9 @@ namespace TopDock.Services
 
         public void Dispose()
         {
+            // 돌고 있는 조회는 취소만 한다 — 그 조회의 CTS는 자기 finally가 정리한다
             _currentCts?.Cancel();
-            _currentCts?.Dispose();
+            _currentCts = null;
             _httpClient.Dispose();
         }
     }

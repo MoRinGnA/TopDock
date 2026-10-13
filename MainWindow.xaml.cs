@@ -31,6 +31,12 @@ namespace TopDock
         private const uint MOD_NOREPEAT = 0x4000;
         private const int WM_HOTKEY = 0x0312;
 
+        /// <summary>
+        /// 시작할 때 각 핫키가 걸렸는가(OS가 준 답). 설정을 적용할 때마다 이 값과 견주어,
+        /// 적용이 핫키 하나를 조용히 죽여 놓았는지 확인한다 — 견줄 기준은 언제나 '시작 상태'다.
+        /// </summary>
+        private Dictionary<HotkeySlot, bool>? _hotkeyAtStart;
+
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint fsModifiers, uint vk);
@@ -45,8 +51,18 @@ namespace TopDock
         [DllImport("user32.dll")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
 
+        // 창을 노치가 앉을 모니터의 사각형에 그대로 덮는다 — WPF의 Left/Top(DIP) 대신 장치 좌표를 쓴다.
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetWindowPos(
+            IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
         private const int WM_CLIPBOARDUPDATE = 0x031D;
         private const int WM_POWERBROADCAST = 0x0218;
+        private const int WM_DISPLAYCHANGE = 0x007E;   // 모니터가 붙거나 빠지거나 해상도·배율이 바뀌었다
         private const int PBT_APMPOWERSTATUSCHANGE = 0x000A;
         private const int PBT_POWERSETTINGCHANGE = 0x8013;
 
@@ -132,10 +148,19 @@ namespace TopDock
         private bool _assistantBusy;
         private bool _assistantStreaming; // 첫 델타 이후 응답 스트리밍 중인가
         private bool _assistantToolExecuting; // 도구 실행 중이면 탭을 다시 열어도 실행 표정을 유지한다.
+        // 이번 턴의 답이 화면에 남아 있는가 — 남아 있는 동안 얼굴은 멈춘다(Still).
+        // 새 지시가 들어오면 다시 살아난다.
+        private bool _assistantResponseOnScreen;
 
         // ── 배터리 표시 ──
         private BatteryLevel _batteryLevel = BatteryLevel.Normal;
         private float _batteryPercent = -1f;
+
+        /// <summary>
+        /// 종료가 시작됐는가 — 배경 이벤트가 UI로 넘어오는 것을 여기서 멈춘다.
+        /// (닫히는 중에 도착한 배경 이벤트는 예외를 던져 전역 핸들러를 거쳐 오류창이 된다)
+        /// </summary>
+        private volatile bool _shuttingDown;
 
         private readonly DispatcherTimer _progressTimer;
         private readonly DispatcherTimer _clockTimer;
@@ -337,21 +362,74 @@ namespace TopDock
 
             AddClipboardFormatListener(hwnd);
 
-            // 복사 기록을 어디서든 꺼내는 전역 단축키 (Ctrl+Shift+V)
-            if (!RegisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x56))
-                Log.Warn("Clipboard hotkey Ctrl+Shift+V is already taken by another app");
-
-            // AI 비서 전역 핫키 등록 (Ctrl+Shift+Space)
-            if (ConfigService.Current.AssistantEnabled)
-            {
-                RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
-            }
-
-            // 놓친 알림 기록 (Ctrl+Shift+N)
-            if (!RegisterHotKey(hwnd, HOTKEY_ID_INBOX, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x4E))
-                Log.Warn("Inbox hotkey Ctrl+Shift+N is already taken by another app");
+            _hotkeyAtStart = RegisterGlobalHotkeys(hwnd);
 
             UpdatePosition();
+
+            // 회귀 하네스가 부른 실행이면 여기서 잠깐 서서 '설정 적용'을 대신 눌러 준다
+            if (IsHotkeySelfTestRun()) StartHotkeySelfTest();
+        }
+
+        /// <summary>
+        /// 전역 핫키를 지금 설정에 맞게 (다시) 건다 — 시작할 때와 설정을 적용할 때가 같은 길을 쓴다.
+        ///
+        /// 한 아이디는 한 번만 등록되므로, 다시 걸 때는 같은 아이디를 먼저 내려야 한다. 그리고
+        /// 함께 내린 것은 함께 올려야 한다: 예전에는 설정 적용이 클립보드 핫키(Ctrl+Shift+V)를 내리고
+        /// 비서 핫키만 다시 걸어서, 설정을 한 번 적용하면 복사 기록 단축기가 영영 듣지 않았다.
+        ///
+        /// 돌려주는 것은 "이번에 각 자리가 실제로 걸렸는가"(OS가 준 답)다. 설정 적용은 이 값을 시작
+        /// 시점의 것과 견주어, 조용히 죽은 자리가 있으면 로그에 남긴다(<see cref="LogHotkeyAudit"/>).
+        /// </summary>
+        private Dictionary<HotkeySlot, bool> RegisterGlobalHotkeys(IntPtr hwnd)
+        {
+            UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
+            UnregisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD);
+            UnregisterHotKey(hwnd, HOTKEY_ID_INBOX);
+
+            var live = new Dictionary<HotkeySlot, bool>();
+
+            // 복사 기록을 어디서든 꺼내는 전역 단축키 (Ctrl+Shift+V)
+            live[HotkeySlot.Clipboard] = RegisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x56);
+            if (!live[HotkeySlot.Clipboard])
+                Log.Warn("Clipboard hotkey Ctrl+Shift+V is already taken by another app");
+
+            // AI 비서 전역 핫키 (Ctrl+Shift+Space) — 설정에서 끔 수 있다.
+            // 꺼 두었으면 '걸지 않은 것'이 이 자리의 정상 상태다(그래서 거짓으로 적는다 —
+            // 여기에 참을 적어 두면 설정을 끈 사람의 로그가 매번 회귀처럼 보인다).
+            bool assistantOn = ConfigService.Current.AssistantEnabled;
+            bool assistantLive = assistantOn
+                && RegisterHotKey(hwnd, HOTKEY_ID_ASSISTANT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x20);
+            live[HotkeySlot.Assistant] = assistantLive;
+            if (assistantOn && !assistantLive)
+                Log.Warn("Assistant hotkey Ctrl+Shift+Space is already taken by another app");
+
+            // 놓친 알림 기록 (Ctrl+Shift+N)
+            live[HotkeySlot.Inbox] = RegisterHotKey(hwnd, HOTKEY_ID_INBOX, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x4E);
+            if (!live[HotkeySlot.Inbox])
+                Log.Warn("Inbox hotkey Ctrl+Shift+N is already taken by another app");
+
+            return live;
+        }
+
+        /// <summary>
+        /// 설정을 적용한 뒤 핫키가 설정대로 살아 있는지 견주어 로그에 남긴다.
+        ///
+        /// 이것이 없으면 회귀는 '사용자가 어느 날 우연히 알아차리는 것'으로만 드러난다(13번이 그랬다).
+        /// 판단은 UI 밖 순수 규칙(<see cref="HotkeyPlan.Audit"/>)이 한다 — 같은 규칙을 회귀 하네스도
+        /// 쓰므로, 로그와 테스트가 같은 말로 같은 것을 본다.
+        /// </summary>
+        private static void LogHotkeyAudit(
+            IReadOnlyDictionary<HotkeySlot, bool>? before,
+            IReadOnlyDictionary<HotkeySlot, bool> after,
+            bool assistantEnabled)
+        {
+            if (before == null) return;
+
+            HotkeyAudit audit = HotkeyPlan.Audit(before, after, assistantEnabled);
+            if (audit.Lost.Count > 0)
+                Log.Error($"Global hotkey lost after settings apply — {audit.Describe()}");
+            else if (audit.Stale.Count > 0)
+                Log.Warn($"Global hotkey state does not match settings — {audit.Describe()}");
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -379,6 +457,16 @@ namespace TopDock
                 (wParam.ToInt32() == PBT_APMPOWERSTATUSCHANGE || wParam.ToInt32() == PBT_POWERSETTINGCHANGE))
             {
                 _batteryService.RefreshNow();
+            }
+            if (msg == WM_DISPLAYCHANGE)
+            {
+                // 모니터 구성이 바뀌었다 — 노치의 자리도 다시 정한다. 고른 모니터가 빠졌다면
+                // MonitorLayout이 주 모니터로 물러서고, 주 모니터가 바뀌었으면 따라간다.
+                RunOnUi(() =>
+                {
+                    UpdatePosition();
+                    if (_clipboardHistoryOpen) RepositionClipboardHistoryPanel();
+                });
             }
             if (msg == WM_NCHITTEST)
             {
@@ -418,6 +506,24 @@ namespace TopDock
             return IntPtr.Zero;
         }
 
+        /// <summary>
+        /// 배경 스레드(COM 콜백·SMTC·WinForms 트레이)의 이벤트를 UI 스레드로 넘긴다.
+        ///
+        /// Dispatcher.Invoke를 그대로 쓰면 두 가지가 걸린다: UI 스레드가 바쁠 때 배경 스레드가
+        /// 붙잡히고, 창이 닫힌 뒤 도착한 이벤트는 예외를 던져 전역 핸들러를 거쳐 모달 오류창이 된다
+        /// (파형·미디어 이벤트는 초당 수십 번 온다). 그래서 종료 중에는 버리고, 그 밖에는 비동기로 넘긴다.
+        /// </summary>
+        private void RunOnUi(Action action)
+        {
+            if (_shuttingDown) return;
+
+            Dispatcher dispatcher = Dispatcher;
+            if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+
+            if (dispatcher.CheckAccess()) action();
+            else dispatcher.BeginInvoke(action);
+        }
+
         /// <summary>화면 좌표가 이 요소의 실제 렌더 영역 안인가 (보이지 않으면 false).</summary>
         private static bool IsInside(FrameworkElement element, Point screenPoint)
         {
@@ -437,10 +543,17 @@ namespace TopDock
 
         private void MainWindow_Closed(object? sender, EventArgs e)
         {
+            // 배경 콜백이 이 뒤로 UI를 건드리지 않게 먼저 잠근다
+            _shuttingDown = true;
+
             _progressTimer.Stop();
             _clockTimer.Stop();
             _volumeHudTimer?.Stop();
             _emptyMediaDebounceTimer?.Stop();
+            _notificationTimer?.Stop();
+            _clipboardToastTimer?.Stop();
+            _assistantDoneTimer?.Stop();
+            _chargingBeamTimer?.Stop();
             StopNotchRadiusAnimation();
             _audioBarsTimer.Stop();
             _audioCapture.Dispose();
@@ -451,16 +564,28 @@ namespace TopDock
                 RemoveClipboardFormatListener(hwnd);
                 UnregisterHotKey(hwnd, HOTKEY_ID_ASSISTANT);
                 UnregisterHotKey(hwnd, HOTKEY_ID_CLIPBOARD);
+                UnregisterHotKey(hwnd, HOTKEY_ID_INBOX);   // 예전엔 인박스 핫키만 남겨 두었다
             }
 
+            // 돌고 있는 요청은 취소만 한다 — CTS는 그 요청의 finally가 자기 자리에서 정리한다
+            // (여기서 Dispose하면 아직 풀리는 중인 토큰 등록이 깨진다).
             _assistantCts?.Cancel();
+            _assistantCts = null;
             _assistant.ResetConversation();
+
+            // 트레이는 프로세스가 살아 있는 동안 계속 보인다 — 창이 닫히는 경로(트레이 종료가 아닌 경우)에서도 걷는다
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            _trayIconImage?.Dispose();   // NotifyIcon은 자기 Icon을 정리하지 않는다
+            _trayIconImage = null;
 
             _audioService.Dispose();
             _mediaService.Dispose();
             _lyricsService.Dispose();
             _batteryService.Dispose();
             _notificationService.Dispose();
+            _assistantTools.Dispose();   // 도구가 들고 있는 HttpClient들(날씨·유튜브)
+            _assistant.Dispose();        // 모델 클라이언트의 HttpClient
         }
     }
 }

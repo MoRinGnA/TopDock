@@ -31,6 +31,28 @@ namespace TopDock.Logic
         /// <summary>이보다 느린 빛은 60fps로 그려도 프레임당 1px도 못 간다.</summary>
         public const double SlowMotionPxPerSec = 60.0;
 
+        /// <summary>
+        /// 이보다 느린 빛은 '거의 멈춘 빛'이다 — 30fps도 과하다.
+        ///
+        /// 문턱을 26px/s로 둔 이유는 실제로 앉는 두 값 사이이기 때문이다: 대기 21.6px/s,
+        /// 일시정지 16.8px/s는 아래고, 재생 31.2px/s는 위다. 그래서 대기·일시정지는 이 아래에,
+        /// 재생은 위에 남는다. 스프링의 오버슈트(≈4.6%)를 더해도 22.6px/s라 문턱을 넘지 않아
+        /// 계단이 흔들리지 않는다.
+        ///
+        /// 실측(2026-10, 화면 밖 하네스 audioprobe의 beam 모드 — 같은 빛을 프레임 수만 바꿔
+        /// 가며 CPU 시간을 잼):
+        ///
+        /// | 프레임 | CPU |
+        /// |---|---|
+        /// | 30fps (이전의 정지 상태) | 135.3 ms/s (코어 1개의 13.5%) |
+        /// | 15fps (지금의 정지 상태) | 33.3 ms/s (3.3%) |
+        /// | 10fps | 26.1 ms/s (2.6%) |
+        ///
+        /// 대기 빛은 초당 22px밖에 움직이지 않는다 — 30fps에서도 프레임당 0.72px이다.
+        /// 하루 종일 켜져 있는 앱에서 그 0.72px을 13.5%의 CPU로 그릴 이유는 없었다.
+        /// </summary>
+        public const double StillMotionPxPerSec = 26.0;
+
         /// <summary>기준 둘레의 바퀴 수를 이 표면의 둘레로 환산한 배율.</summary>
         public static double ScaleFor(double perimeter)
             => Math.Min(RefPerimeter / Math.Max(1.0, perimeter), MaxScale);
@@ -39,8 +61,16 @@ namespace TopDock.Logic
         public static double PixelSpeed(double speed, double perimeter)
             => Math.Abs(speed) * ScaleFor(perimeter) * Math.Max(1.0, perimeter);
 
-        /// <summary>60fps로 그릴 이유가 없을 만큼 느린 빛인가 — 굵은 빛과 번쩍임은 예외.</summary>
-        public static bool IsSlowMotion(double speed, double perimeter, bool largeOrFlashing)
-            => !largeOrFlashing && PixelSpeed(speed, perimeter) < SlowMotionPxPerSec;
+        /// <summary>
+        /// 이 빛을 몇 fps로 그릴까 — 굵은 빛(Large)과 번쩍임은 프레임 사이가 실제로 보이므로
+        /// 언제나 60fps다. 나머지는 프레임당 이동량이 정한다(상태 이름이 아니라 픽셀).
+        /// </summary>
+        public static int FramesPerSecond(double speed, double perimeter, bool largeOrFlashing)
+        {
+            if (largeOrFlashing) return 60;
+            double px = PixelSpeed(speed, perimeter);
+            if (px < StillMotionPxPerSec) return 15;
+            return px < SlowMotionPxPerSec ? 30 : 60;
+        }
     }
 }

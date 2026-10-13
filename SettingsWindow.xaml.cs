@@ -11,6 +11,12 @@ namespace TopDock
         /// <summary>적용 후 MainWindow가 설정을 다시 적용할 수 있도록 알린다.</summary>
         public event System.EventHandler? SettingsSaved;
 
+        /// <summary>모니터 목록의 한 줄 — ComboBox에는 라벨이 보이고, 설정에는 값(장치 이름)이 저장된다.</summary>
+        private sealed record MonitorChoice(string Value, string Label)
+        {
+            public override string ToString() => Label;
+        }
+
         public SettingsWindow()
         {
             InitializeComponent();
@@ -26,6 +32,8 @@ namespace TopDock
 
             TopMarginSlider.Value = cfg.TopMargin;
             TopMarginValueText.Text = ((int)cfg.TopMargin).ToString();
+
+            LoadDockScreenOptions(cfg.DockScreen);
 
             ApiKeyBox.Password = cfg.YouTubeApiKey;
 
@@ -100,6 +108,7 @@ namespace TopDock
             cfg.ShowClipboardToast = ShowClipboardToastCheck.IsChecked == true;
 
             cfg.TopMargin = (int)TopMarginSlider.Value;
+            cfg.DockScreen = (DockScreenCombo.SelectedItem as MonitorChoice)?.Value ?? MonitorLayout.Primary;
 
             cfg.YouTubeApiKey = ApiKeyBox.Password.Trim();
 
@@ -123,6 +132,31 @@ namespace TopDock
                 if (!result.Exists(x => string.Equals(x, app, StringComparison.OrdinalIgnoreCase))) result.Add(app);
             }
             return result;
+        }
+
+        /// <summary>
+        /// 노치를 앉힐 모니터 목록을 지금 붙어 있는 화면으로 채운다.
+        ///
+        /// 첫 줄('주 모니터')은 장치 이름이 아니라 "주 화면을 따라간다"는 뜻이다 — 사용자가 주 디스플레이를
+        /// 바꾸면 노치도 따라가야 하므로, 특정 모니터를 콕 집는 것과 구분해 둔다.
+        /// 저장된 모니터가 지금 없으면(뽑은 채로 설정을 열었을 때) 목록에 없다 — 그때는 '주 모니터'를
+        /// 기본으로 보여 준다. 창은 어차피 그 모니터로 물러선다.
+        /// </summary>
+        private void LoadDockScreenOptions(string selected)
+        {
+            DockScreenCombo.Items.Clear();
+            DockScreenCombo.Items.Add(new MonitorChoice(MonitorLayout.Primary, "주 모니터 (자동)"));
+
+            int selectIndex = 0;
+            foreach (MonitorRect monitor in ScreenService.All())
+            {
+                DockScreenCombo.Items.Add(new MonitorChoice(monitor.Device, ScreenService.LabelFor(monitor)));
+                if (string.Equals(monitor.Device, (selected ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    selectIndex = DockScreenCombo.Items.Count - 1;
+                }
+            }
+            DockScreenCombo.SelectedIndex = selectIndex;
         }
 
         private void Apply_Click(object sender, RoutedEventArgs e)

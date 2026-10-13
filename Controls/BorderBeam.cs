@@ -36,10 +36,10 @@ namespace TopDock.Controls
         private const double FadeInSec = 0.6;
         private const double FadeOutSec = 0.5;
 
-        // ── 시계 ── 60fps는 굵은 빛과 모프를 위한 값이다. 그보다 느린 빛은 30fps로도
-        // 눈에 담기는 것이 없다(1px/프레임 미만) — 그만큼 CPU를 돌려준다.
-        private static readonly TimeSpan FastTick = TimeSpan.FromSeconds(1.0 / 60.0);
-        private static readonly TimeSpan SlowTick = TimeSpan.FromSeconds(1.0 / 30.0);
+        // ── 시계 ── 프레임 수는 빛이 스스로 정한다(BeamSpeed.FramesPerSecond):
+        // 60fps는 굵은 빛·번쩍임·모프를 위한 값이고, 프레임당 1px도 못 가는 빛은 30fps,
+        // 거의 멈춘 빛(대기·일시정지, 22px/s 미만)은 15fps로 내려간다. 하루 종일 켜져 있는
+        // 앱에서 정지한 테두리를 30fps로 다시 그리는 값은 코어 1개의 13.5%였다(실측).
 
         // ── 살아있는 가장자리 상수 ──
         // 상시 림 알파. 이 가장자리의 유일한 주인이므로, 예전 두 겹(본체 그래디언트 + 빔 림)의
@@ -116,6 +116,7 @@ namespace TopDock.Controls
             nameof(Active), typeof(bool), typeof(BorderBeam),
             new PropertyMetadata(false, (s, e) => ((BorderBeam)s).OnActiveChanged()));
         public bool Active { get => (bool)GetValue(ActiveProperty); set => SetValue(ActiveProperty, value); }
+
 
         /// <summary>운동의 양 — 혜성 헤드가 초당 도는 바퀴 수. 음수면 반시계, 0이면 제자리에서 호흡만.
         /// 상태(대기 느리게 / 사고 빠르게 / 오류 역방향)를 이 하나로 표현한다.</summary>
@@ -214,16 +215,16 @@ namespace TopDock.Controls
         }
 
         /// <summary>
-        /// 빛이 느리면 절반의 프레임으로 그린다.
+        /// 빛이 느리면 프레임을 줄인다 — 얼마나 줄일지는 BeamSpeed가 픽셀 이동량으로 정한다.
         ///
-        /// 대기(0.09 → 21.6px/s)는 60fps에서 프레임당 0.36px밖에 움직이지 않는다 — 같은 그림을
-        /// 두 번 그리는 셈이라, 30fps로도 눈에 담기는 것이 없다. 반대로 굵은 빛(Large)과
+        /// 대기(0.09 → 21.6px/s)는 프레임당 0.72px밖에 움직이지 않는다. 같은 그림을 두 번 그리는
+        /// 셈이라 15fps로도 눈에 담기는 것이 없다(실측 135 → 33ms/s). 반대로 굵은 빛(Large)과
         /// 번쩍임(Flash)은 프레임 사이가 실제로 보이므로 60fps를 지킨다.
         /// </summary>
         private void UpdateTickRate()
         {
-            bool slow = BeamSpeed.IsSlowMotion(_speedS, _perimeter, _weightS > 0.5 || Flash >= 0.001);
-            TimeSpan want = slow ? SlowTick : FastTick;
+            int fps = BeamSpeed.FramesPerSecond(_speedS, _perimeter, _weightS > 0.5 || Flash >= 0.001);
+            TimeSpan want = TimeSpan.FromSeconds(1.0 / fps);
             if (_timer.Interval != want) _timer.Interval = want;
         }
 

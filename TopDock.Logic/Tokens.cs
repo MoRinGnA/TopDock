@@ -82,6 +82,17 @@ namespace TopDock.Logic
         public const int FeedbackPopMs = 240;
         public const double FeedbackPopFrom = 0.65;
         public const int FeedbackFadeOutMs = 220;
+        /// <summary>
+        /// 무한 반복 연출(대기 얼굴의 호흡·충전 맥동·AI 상태 점의 숨쉬기)을 그리는 프레임 수.
+        ///
+        /// 무한 반복 애니메이션은 아무 값도 주지 않으면 화면 주사율만큼 돈다. 이 앱의 노치는
+        /// 화면 전체를 덮는 투명 창이라, 값이 바뀔 때마다 창 전체가 다시 합성된다 — 실측
+        /// (2026-10, audioprobe의 frameprobe): 대기 상태에서 초당 약 88장을 그리며 코어 1개의
+        /// 약 22%를 썼고, 그 대부분이 이 반복 연출이었다. 1.35초 동안 3.5% 움직이는 호흡에는
+        /// 20장이면 충분히 매끄럽다.
+        /// </summary>
+        public const int IdlePulseFps = 20;
+
         public const int FrameRate = 60;           // 기본값은 화면 주사율을 못 따라가 모프가 끊겨 보인다
         public const int MorphEaseExponent = 6;    // 도크 상자 자체가 늘고 줄는 곡선(내용과 다른 손짓)
         public const int EaseOutExponent = 5;      // 정착 — 빠르게 출발해 부드럽게 멈춘다

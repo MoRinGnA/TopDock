@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -12,12 +13,53 @@ namespace TopDock
 {
     public partial class MainWindow : Window
     {
+        /// <summary>
+        /// 창을 노치가 앉을 모니터 위에 정확히 덮는다.
+        ///
+        /// 예전에는 `Left = 0`, `Width = SystemParameters.PrimaryScreenWidth` — 주 화면 하나에 못 박힌
+        /// 값이었다. 그 둘은 주 모니터가 가상 화면의 (0,0)에 있을 때만 맞아서, 주 모니터를 오른쪽에 두고
+        /// 쓰는 배치에서는 노치가 엉뚱한 화면에 앉았다(모니터를 고를 수 있게 하는 것과는 별개의 버그였다).
+        ///
+        /// 창은 장치 좌표로 직접 앉힌다(SetWindowPos). WPF의 Left/Top(DIP)은 옮겨 가는 모니터의 배율을
+        /// 미리 알 수 없어서, 배율이 다른 모니터로 옮길 때 몇십 픽셀씩 어긋난다 — 창이 덮는 좌표 공간과
+        /// 모니터 목록의 좌표 공간이 같은 쪽(장치 픽셀)을 쓰면 그 문제가 아예 없다.
+        /// </summary>
         private void UpdatePosition()
         {
-            this.Left = 0;
-            this.Top = ConfigService.Current.TopMargin;
-            this.Width = SystemParameters.PrimaryScreenWidth;
-            this.Height = SystemParameters.PrimaryScreenHeight;
+            var monitors = ScreenService.All();
+            MonitorRect target = MonitorLayout.Choose(monitors, ConfigService.Current.DockScreen);
+            if (target.IsEmpty)
+            {
+                // 모니터를 하나도 못 읽었다 — 자리를 옮기지 않는다(창을 화면 밖으로 밀어내는 것보다 낫다)
+                Log.Warn("No monitors reported - keeping the current position");
+                return;
+            }
+
+            if (MonitorLayout.FellBackToPrimary(monitors, ConfigService.Current.DockScreen))
+            {
+                Log.Warn($"Dock monitor '{ConfigService.Current.DockScreen}' is not connected - using {target.Device}");
+            }
+
+            // 상단 여백만은 설정에서 DIP로 적혀 있다 — 장치 픽셀로 환산해야 배율이 다른 모니터에서도
+            // 같은 간격으로 보인다(96dpi 모니터에서는 환산이 1.0이라 지금 값 그대로다).
+            double scale = ScreenService.ScaleFor(target);
+            int topMargin = (int)Math.Round(ConfigService.Current.TopMargin * scale);
+
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                SetWindowPos(hwnd, IntPtr.Zero,
+                    target.Left, target.Top + topMargin, target.Width, target.Height,
+                    SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            else
+            {
+                // 창 핸들이 아직 없을 때의 물러설 자리 — WPF 기본 배치에 맡긴다.
+                this.Left = target.Left / scale;
+                this.Top = target.Top / scale + ConfigService.Current.TopMargin;
+                this.Width = target.Width / scale;
+                this.Height = target.Height / scale;
+            }
         }
 
         private void ClockTimer_Tick(object? sender, EventArgs e)
@@ -466,10 +508,9 @@ namespace TopDock
 
         private void AudioService_VolumeChanged(int volume, bool isMuted)
         {
-            Dispatcher.Invoke(() =>
-            {
-                ShowVolumeRing(volume, isMuted);
-            });
+            // COM 콜백에서 온다(배경 스레드다) — RunOnUi를 쓰지 않으면 창이 닫히는 중에
+            // 도착한 이벤트가 예외를 던져 전역 핸들러를 거쳐 모달 오류창이 된다.
+            RunOnUi(() => ShowVolumeRing(volume, isMuted));
         }
 
         private void ShowVolumeRing(int volumeVal, bool isMuted)

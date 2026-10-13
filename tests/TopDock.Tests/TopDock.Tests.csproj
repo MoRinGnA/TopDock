@@ -18,7 +18,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <!-- 창(WPF) 프로젝트가 아니라 순수 로직만 본다 — 그래야 테스트가 화면 없이 돌아간다. -->
+  <!-- 창(WPF) 프로젝트가 아니라 순수 로직만 참조한다 — 그래야 거의 모든 테스트가 화면 없이 돈다.
+       예외는 하나: HotkeyRegressionTests는 빌드된 앱 실행 파일을 띄워 전역 핫키를 확인한다
+       (핫키는 창에만 걸려서 참조만으로는 부를 수 없다). 그 하나 때문에 이 프로젝트는
+       Windows 대화형 데스크톱과 먼저 빌드해 둔 앱을 요구한다. -->
   <ItemGroup>
     <ProjectReference Include="../../TopDock.Logic/TopDock.Logic.csproj" />
   </ItemGroup>

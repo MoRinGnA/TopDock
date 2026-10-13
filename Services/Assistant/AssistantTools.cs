@@ -12,7 +12,7 @@ namespace TopDock.Services
     /// 비서가 실제로 조작할 수 있는 기기 도구 모음.
     /// UI를 전혀 모른다 — 무엇을 했는지 문장으로만 돌려주고, 시각 연출은 호스트가 이벤트로 붙인다.
     /// </summary>
-    public sealed class AssistantTools
+    public sealed class AssistantTools : IDisposable
     {
         /// <summary>도구 실행 직전/직후에 울린다. 호스트(UI)가 진행 상태 피드백을 연결하는 지점.</summary>
         public event Action<string>? ToolStarted;
@@ -332,6 +332,16 @@ namespace TopDock.Services
                    && args.TryGetProperty(key, out var el)
                    && el.ValueKind == JsonValueKind.Number
                    && el.TryGetInt32(out value);
+        }
+
+        /// <summary>
+        /// 도구가 들고 있는 HttpClient들을 끝낸다(날씨·유튜브). 이 도구들은 앱과 수명을 같이하므로
+        /// 정리 시점은 창이 닫힐 때 하나뿐이다.
+        /// </summary>
+        public void Dispose()
+        {
+            _youTube.Dispose();
+            _weather.Dispose();
         }
     }
 }

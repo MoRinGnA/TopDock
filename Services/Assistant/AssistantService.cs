@@ -14,7 +14,7 @@ namespace TopDock.Services
     /// 세션 동안 최근 N턴의 히스토리만 유지해 토큰 누적을 제한한다.
     /// 도구 호출(function calling) 루프로 기기 조작 명령을 실제 실행까지 연결한다.
     /// </summary>
-    public class AssistantService
+    public class AssistantService : IDisposable
     {
         private const int MaxHistoryTurns = 10;
         private const int MaxToolRounds = 3;
@@ -201,6 +201,9 @@ namespace TopDock.Services
 
         private static string Truncate(string s, int max) =>
             s.Length <= max ? s : s[..max] + "…(이하 생략)";
+
+        /// <summary>모델 클라이언트가 쥐고 있는 HttpClient를 끝낸다.</summary>
+        public void Dispose() => _client.Dispose();
     }
 
 }

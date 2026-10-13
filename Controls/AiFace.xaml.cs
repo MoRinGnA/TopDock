@@ -14,12 +14,14 @@ namespace TopDock.Controls
     /// Alert    : 눈을 크게 뜬 집중(도구 실행) 표정
     /// Talking  : 응답 조각이 올 때마다 눈이 오므라졌다 풀리는 발화 표정
     /// Sad      : 눈이 작아지고 시선이 아래로
+    /// Still    : 눈은 뜬 채 반복 연출을 하나도 하지 않는다. 읽을 답이 화면에 남아 있는 동안의
+    ///            얼굴이다 — 글을 읽는 눈 옆에서 눈이 계속 깜빡이면 시선을 뺏는다(실측 피드백).
     /// 눈동자·눈썹·입은 쓰지 않는다 — 넣으면 표정이 무섭게 읽힌다(실측 피드백).
     /// 반복 연출은 이 컨트롤이 자기 상태와 보이는 여부만 보고 스스로 켜고 끈다.
     /// </summary>
     public partial class AiFace : UserControl
     {
-        public enum FaceState { Idle, Alert, Thinking, Talking, Sad }
+        public enum FaceState { Idle, Alert, Thinking, Talking, Sad, Still }
 
         // 발화 리듬: 한 번 오므렸다 풀리는 시간과 연속 발화의 최소 간격
         private const double SpeechPulseMs = 190;
@@ -31,8 +33,10 @@ namespace TopDock.Controls
         private readonly DispatcherTimer _gazeTimer;
         private readonly DispatcherTimer _speechTimer;
         private readonly Random _rand = new();
-        private Storyboard? _wobbleStoryboard;
-        private Storyboard? _breathStoryboard;
+        // 반복 연출이 지금 돌고 있는가. Storyboard를 들고 있지 않고 직접 건 애니메이션을
+        // 기억하는 이유는 아래 StartBreathing의 주석에 있다.
+        private bool _wobbling;
+        private bool _breathing;
         private DateTime _lastPulse = DateTime.MinValue;
 
         public AiFace()
@@ -104,6 +108,8 @@ namespace TopDock.Controls
             // 생각: 눈은 뜬 채로 시선만 위로 (눈을 감으면 무슨 상태인지 읽히지 않는다)
             FaceState.Thinking => (13, -3),
             FaceState.Sad => (8, 3),
+            // 멈춘 얼굴은 Idle과 같은 크기다 — 크기가 아니라 '움직이지 않는 것'이 이 상태의 뜻이다.
+            FaceState.Still => (16, 0),
             _ => (16, 0),
         };
 
@@ -128,6 +134,16 @@ namespace TopDock.Controls
 
             LeftGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(gazeY, sizeTime) { EasingFunction = ease });
             RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(gazeY, sizeTime) { EasingFunction = ease });
+
+            // 멈춘 얼굴(Still): 돌고 있던 깜빡임·발화 펄스·시선을 지금 걷는다. 걷는 즉시 기본값(눈 100%·가운데)으로
+            // 돌아가므로, 상태가 바뀌는 그 프레임에 얼굴이 완전히 멈춘다. 이후 SyncAnimations가 아무 반복도 켜지 않는다.
+            if (_state == FaceState.Still)
+            {
+                LeftBlink.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                RightBlink.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                LeftGaze.BeginAnimation(TranslateTransform.XProperty, null);
+                RightGaze.BeginAnimation(TranslateTransform.XProperty, null);
+            }
 
             // 말하기 시작하는 순간부터 눈이 박자를 탄다
             if (_state == FaceState.Talking)
@@ -160,7 +176,7 @@ namespace TopDock.Controls
             {
                 StartBreathing();
             }
-            else if (_breathStoryboard != null)
+            else if (_breathing)
             {
                 StopBreathing();
             }
@@ -169,7 +185,7 @@ namespace TopDock.Controls
             {
                 StartThinkingWobble();
             }
-            else if (_wobbleStoryboard != null)
+            else if (_wobbling)
             {
                 StopThinkingWobble();
             }
@@ -196,6 +212,8 @@ namespace TopDock.Controls
             if (_rand.NextDouble() < 0.22)
             {
                 await System.Threading.Tasks.Task.Delay(240);
+                // 그 240ms 사이에 얼굴이 멈췄으면(Still) 두 번째는 없다 — 멈춘 얼굴이 깜빡이면 안 된다.
+                if (_state is not (FaceState.Idle or FaceState.Alert or FaceState.Thinking or FaceState.Talking)) return;
                 BlinkOnce(dur, ease);
             }
         }
@@ -231,35 +249,45 @@ namespace TopDock.Controls
             RightGaze.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y, dur) { EasingFunction = ease });
         }
 
+        /// <summary>
+        /// 작은 크기에서도 살아 있는 느낌만 나도록 눈 너비를 천천히 호흡시킨다.
+        ///
+        /// Storyboard로 걸면 안 된다 — 실측(2026-10, 화면 밖 하네스 faceprobe의 variants):
+        /// Storyboard에 SetTarget으로 건 애니메이션은 대상에 붙기는 하는데
+        /// (HasAnimatedProperties=True) 눈 폭이 1.0000에서 꿈쩍도 하지 않았다(폭 0.0000).
+        /// 같은 애니메이션을 직접 걸면 1.0003~1.0350으로 제대로 돈다. 그래서 반복 연출은
+        /// 깜빡임·시선과 같은 방식(직접 BeginAnimation)으로 건다 — 넣는 방식이 갈리면
+        /// "왜 호흡만 안 보이지"를 다시 추적하게 된다.
+        /// </summary>
         private void StartBreathing()
         {
-            if (_state != FaceState.Idle || !IsVisible || _breathStoryboard != null) return;
+            if (_state != FaceState.Idle || !IsVisible || _breathing) return;
 
-            // 작은 크기에서도 살아 있는 느낌만 나도록 눈 너비를 천천히 호흡시킨다.
-            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
-            var leftEye = new DoubleAnimation(1.0, 1.035, TimeSpan.FromSeconds(1.35))
+            var anim = new DoubleAnimation(1.0, 1.035, TimeSpan.FromSeconds(1.35))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = ease,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             };
-            var rightEye = leftEye.Clone();
-
-            _breathStoryboard = new Storyboard();
-            Storyboard.SetTarget(leftEye, LeftBlink);
-            Storyboard.SetTargetProperty(leftEye, new PropertyPath(ScaleTransform.ScaleXProperty));
-            Storyboard.SetTarget(rightEye, RightBlink);
-            Storyboard.SetTargetProperty(rightEye, new PropertyPath(ScaleTransform.ScaleXProperty));
-            _breathStoryboard.Children.Add(leftEye);
-            _breathStoryboard.Children.Add(rightEye);
-            _breathStoryboard.Begin();
+            // 프레임 수는 Tokens가 정한다 — 무한 반복 연출이 화면 주사율만큼 돌면
+            // 화면 전체를 덮는 창이 그만큼 다시 합성된다(실측: 대기 비용의 대부분이 이 반복이다).
+            Timeline.SetDesiredFrameRate(anim, Tokens.IdlePulseFps);
+            // 참고: 이 호흡은 무한 반복이라 화면이 켜져 있는 동안 매 프레임 다시 그려진다. 실측
+            // (2026-10, %TEMP%\audioprobe): 켜 둔 대기 236 ms/s → 끈 대기 172 ms/s (코어의 6%).
+            // DesiredFrameRate로 낮춰도 줄지 않았다(10fps로 지정 → 232.8 ms/s) — 대가는
+            // '살아 있는 느낌'과 맞바꾸는 것이라 여기서는 그대로 둔다.
+            LeftBlink.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
+            RightBlink.BeginAnimation(ScaleTransform.ScaleXProperty, anim.Clone());
+            _breathing = true;
         }
 
         /// <summary>호흡만 걷어낸다 — 방금 건 표정 애니메이션은 취소하지 않는다.</summary>
         private void StopBreathing()
         {
-            _breathStoryboard?.Stop();
-            _breathStoryboard = null;
+            if (!_breathing) return;
+            LeftBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            RightBlink.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            _breathing = false;
         }
 
         private void StopAnimations()
@@ -274,27 +302,24 @@ namespace TopDock.Controls
         /// <summary>Thinking 상태에서의 미세 흔들림 — 얼굴 전체를 아주 조금 옆으로 흔든다.</summary>
         private void StartThinkingWobble()
         {
-            if (_wobbleStoryboard != null) return;
+            if (_wobbling) return;
 
-            var anim = new DoubleAnimation(-1.2, 1.2, TimeSpan.FromMilliseconds(300))
-            {
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever,
-                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
-            };
-            _wobbleStoryboard = new Storyboard();
-            Storyboard.SetTarget(anim, EyesBounce);
-            Storyboard.SetTargetProperty(anim, new PropertyPath(TranslateTransform.XProperty));
-            _wobbleStoryboard.Children.Add(anim);
-            _wobbleStoryboard.Begin();
+            EyesBounce.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(-1.2, 1.2, TimeSpan.FromMilliseconds(300))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = RepeatBehavior.Forever,
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+                });
+            _wobbling = true;
         }
 
         private void StopThinkingWobble()
         {
-            _wobbleStoryboard?.Stop();
-            _wobbleStoryboard = null;
+            if (!_wobbling) return;
             EyesBounce.BeginAnimation(TranslateTransform.XProperty, null);
             EyesBounce.X = 0;
+            _wobbling = false;
         }
     }
 }

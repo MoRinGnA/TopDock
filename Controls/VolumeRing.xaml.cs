@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -96,9 +97,29 @@ namespace TopDock.Controls
         /// <summary>세 칸의 높이(0~1)를 받는다. 다듬는 일(어택·릴리즈)은 이미 캡처 쪽에서 끝났다.</summary>
         public void SetBars(float low, float mid, float high)
         {
+            // 바늘이 자리를 비켰으면(상태 점이 쓰는 중) 값을 받을 이유도 다시 그릴 이유도 없다.
+            // 예전에는 이 무효화 때문에 재생 내내 30fps로 호 전체를 다시 그렸다(렌더 1회 108KB·0.39ms).
+            if (!BarsVisible) return;
+
             _bars[0] = low;
             _bars[1] = mid;
             _bars[2] = high;
+            InvalidateVisual();
+        }
+
+        /// <summary>
+        /// 세 칸을 바닥으로 내린다 — SetBars와 달리 '보이는 중'인지 묻지 않는다.
+        ///
+        /// 재생이 멈추면 바늘을 바닥에 놓아야 한다. 이때 창은 먼저 BarsVisible을 내리므로,
+        /// SetBars(0,0,0)로는 아무 일도 일어나지 않았다(조기 반환) — 값이 마지막 소리에 멈춘 채
+        /// 남아, 다음에 무엇이 바늘을 되살릴 때(캡처가 아직 준비되지 않은 첫 틱 등) 낡은 값이
+        /// 한 프레임 보일 수 있었다.
+        /// </summary>
+        public void ResetBars()
+        {
+            _bars[0] = 0;
+            _bars[1] = 0;
+            _bars[2] = 0;
             InvalidateVisual();
         }
 
@@ -115,7 +136,7 @@ namespace TopDock.Controls
             double pct = Math.Clamp(Level, 0, 100) / 100.0;
 
             // 트랙 — 볼륨이 0이어도 고리의 나머지가 보이게 어둑하게 전체를 긋는다
-            dc.DrawEllipse(null, MakePen(TrackColor, Thickness, false), new Point(cx, cy), radius, radius);
+            dc.DrawEllipse(null, PenFor(TrackColor, Thickness, false), new Point(cx, cy), radius, radius);
 
             if (pct > 0.0005)
             {
@@ -126,6 +147,82 @@ namespace TopDock.Controls
             if (BarsVisible) DrawBars(dc, cx, cy);
         }
 
+        /// <summary>
+        /// 호 한 층(블룸 또는 코어)을 긋는다.
+        ///
+        /// 세그먼트(≈2.4°) 하나마다 DrawLine + 새 Pen을 쓰면 두 가지를 잃는다:
+        ///   · 이음매 — 굵은 획에 둥근 캡이 겹쳐 곡선이 도트처럼 보인다(BorderBeam이 같은 이유로
+        ///     구간 폴리라인을 쓴다)
+        ///   · 할당 — 실측(2026-10, %TEMP%\ringprobe): 24px 링이 프레임당 108KB를 할당하고
+        ///     30fps에서 3.24MB/s를 쓰레기로 만들었다. 그 비용은 전부 이 루프였다.
+        /// 그래서 밝기 버킷이 같은 연속 구간을 모아 하나의 폴리라인으로 긋는다 — 펜은 캐시에서
+        /// 꺼내 쓰므로 프레임 사이에 새로 만드는 펜이 0개가 된다.
+        ///
+        /// 한 가지 눈에 보이는 차이가 따라온다: 예전에는 세그먼트(0.4px 간격)마다 2px 획이 겹쳐
+        /// 그려져 알파가 여러 번 합성됐다 — 코드가 말하는 꼬리 알파 0.28이 실제로는 0.83으로 칠해졌다.
+        /// 이제는 한 번만 칠하니 꼬리가 옅어졌다(실측: 꼬리 213→183/255, 머리는 255로 그대로).
+        /// </summary>
+        /// <remarks>
+        /// 이 차이가 싫으면 세그먼트 단위로 긋는 예전 방식으로 되돌리면 된다 — 다만 그때는
+        /// 프레임당 펜 300개를 새로 만들던 할당도 함께 돌아온다(실측 110KB/프레임).
+        /// </remarks>
+        private void DrawArcLayer(DrawingContext dc, double cx, double cy, double radius, double startDeg,
+            double sweep, int segments, double[] alpha, Color accent, bool bloom)
+        {
+            int runStart = 0;
+            int runBucket = ArcBucket(alpha, 0, bloom);
+
+            for (int i = 1; i <= segments; i++)
+            {
+                // 마지막 점은 무조건 구간을 끊는다 — 남은 구간을 루프 밖에서 다시 긋지 않기 위해서다
+                int bucket = i < segments ? ArcBucket(alpha, i, bloom) : int.MinValue;
+                if (bucket == runBucket) continue;
+
+                StrokeArcRun(dc, cx, cy, radius, startDeg, sweep, segments, alpha, runStart, i, accent, bloom);
+                runStart = i;
+                runBucket = bucket;
+            }
+        }
+
+        /// <summary>
+        /// 구간 버킷 — 눈에 안 보이는 폭으로 밝기를 묶어 구간 수를 고정한다.
+        /// 블룸은 밝기 폭 자체가 1바이트라 값마다 따로 묶고(사실상 손실 없음), 코어는 8단계마다 묶는다
+        /// (알파 3% 차이 — 어두운 배경 위 2px 획에서는 띠로 보이지 않는다).
+        /// </summary>
+        private static int ArcBucket(double[] alpha, int index, bool bloom)
+        {
+            int byteAlpha = (int)Math.Clamp(alpha[index] * (bloom ? BloomAlphaFactor : 1.0) * 255, 0, 255);
+            if (byteAlpha < 2) return -1;                       // 이만큼 어두우면 그리지 않는다(예전과 같다)
+            return byteAlpha >> (bloom ? 0 : 3);
+        }
+
+        /// <summary>구간 [start, end]를 폴리라인 하나로 — 대표값은 구간 가운데 세그먼트의 값이다.</summary>
+        private void StrokeArcRun(DrawingContext dc, double cx, double cy, double radius, double startDeg,
+            double sweep, int segments, double[] alpha, int start, int end, Color accent, bool bloom)
+        {
+            if (end <= start) return;
+
+            int mid = start + ((end - start) / 2);
+            double tMid = (double)mid / segments;
+            int byteAlpha = (int)Math.Clamp(alpha[mid] * (bloom ? BloomAlphaFactor : 1.0) * 255, 0, 255);
+            if (byteAlpha < 2) return;
+
+            // 블룸은 헤드 쪽이 조금 더 넓게 번진다(약하게: 본체의 약 8%)
+            double width = bloom ? Thickness * (1.5 + 0.4 * tMid) : Thickness;
+
+            var geo = new StreamGeometry();
+            using (StreamGeometryContext ctx = geo.Open())
+            {
+                ctx.BeginFigure(PointOn(cx, cy, radius, startDeg + sweep * start / segments), false, false);
+                for (int i = start + 1; i <= end; i++)
+                {
+                    ctx.LineTo(PointOn(cx, cy, radius, startDeg + sweep * i / segments), true, false);
+                }
+            }
+            geo.Freeze();
+            dc.DrawGeometry(null, PenFor(WithAlpha(accent, (byte)byteAlpha), width, true), geo);
+        }
+
         private void DrawArc(DrawingContext dc, double cx, double cy, double radius, Color accent, double pct)
         {
             // 완전한 원(360°)은 시작=끝이라 이어 그리면 안 된다 — 아주 살짝 남긴다.
@@ -133,39 +230,24 @@ namespace TopDock.Controls
             int segments = Math.Max(12, (int)Math.Ceiling(sweep / 2.4)); // ≈2.4° 간격
             const double startDeg = -90.0; // 12시
 
-            Point prev = PointOn(cx, cy, radius, startDeg);
-            for (int i = 1; i <= segments; i++)
+            // 라이팅 — 꼬리에서 헤드로 차오르는 밝기. 두 층(블룸·코어)이 같은 값을 나눠 쓴다.
+            if (_arcAlpha.Length < segments + 1) _arcAlpha = new double[segments + 1];
+            double[] alpha = _arcAlpha;
+            for (int i = 0; i <= segments; i++)
             {
                 double t = (double)i / segments;                 // 0=꼬리, 1=헤드
-                Point cur = PointOn(cx, cy, radius, startDeg + sweep * t);
-
-                // 라이팅 — 꼬리에서 헤드로 차오르는 밝기
-                double alpha = 0.28 + 0.72 * Math.Pow(t, 0.85);
+                double a = 0.28 + 0.72 * Math.Pow(t, 0.85);
                 double head = Math.Exp(-Math.Pow((1.0 - t) / 0.12, 2)); // 헤드 코어
-                alpha = Math.Min(1.0, alpha + head * 0.35);
-
-                // 블룸 — 헤드 쪽이 조금 더 넓게 번진다(약하게: 본체의 약 8%)
-                byte bloomAlpha = (byte)Math.Clamp(alpha * 0.08 * 255, 0, 255);
-                if (bloomAlpha >= 2)
-                {
-                    double bloomWidth = Thickness * (1.5 + 0.4 * t);
-                    dc.DrawLine(MakePen(WithAlpha(accent, bloomAlpha), bloomWidth, true), prev, cur);
-                }
-
-                byte coreAlpha = (byte)Math.Clamp(alpha * 255, 0, 255);
-                dc.DrawLine(MakePen(WithAlpha(accent, coreAlpha), Thickness, true), prev, cur);
-
-                prev = cur;
+                alpha[i] = Math.Min(1.0, a + head * 0.35);
             }
+
+            DrawArcLayer(dc, cx, cy, radius, startDeg, sweep, segments, alpha, accent, bloom: true);
+            DrawArcLayer(dc, cx, cy, radius, startDeg, sweep, segments, alpha, accent, bloom: false);
 
             // 헤드 글로우 — 끝점에 맺히는 작은 빛
             Point tip = PointOn(cx, cy, radius, startDeg + sweep);
             double glowRadius = Thickness * 1.0;
-            var glow = new RadialGradientBrush(
-                WithAlpha(accent, (byte)(0.5 * 255)),
-                WithAlpha(accent, 0));
-            glow.Freeze();
-            dc.DrawEllipse(glow, null, tip, glowRadius, glowRadius);
+            dc.DrawEllipse(GlowBrush(accent), null, tip, glowRadius, glowRadius);
         }
 
         /// <summary>
@@ -180,9 +262,7 @@ namespace TopDock.Controls
             double bottom = cy + Tokens.RingBarMaxHeight / 2;
 
             Color color = IsMuted ? MutedColor : BarsBrush is SolidColorBrush solid ? solid.Color : BarIdleColor;
-
-            var brush = new SolidColorBrush(color);
-            brush.Freeze();
+            Brush brush = FrozenBrush(color);
 
             for (int i = 0; i < _bars.Length; i++)
             {
@@ -204,18 +284,62 @@ namespace TopDock.Controls
 
         private static Color WithAlpha(Color c, byte a) => Color.FromArgb(a, c.R, c.G, c.B);
 
-        private static Pen MakePen(Color color, double thickness, bool round)
+        // ── 캐시 ── 값이 아니라 '종류'로 키를 만든다. 이 컨트롤은 30fps로 다시 그려지므로,
+        //    그릴 때마다 Pen·Brush를 만들면 그게 곧 쓰레기 배출이다(위 DrawArcLayer 주석의 실측).
+        private readonly Dictionary<int, Pen> _penCache = new();
+        private readonly Dictionary<Color, Brush> _solidBrushCache = new();
+        private Brush? _glowBrush;
+        private Color _glowColor;
+        private double[] _arcAlpha = Array.Empty<double>();
+
+        /// <summary>호 밝기의 블룸 비율 — 본체 빛의 약 8%.</summary>
+        private const double BloomAlphaFactor = 0.08;
+
+        /// <summary>
+        /// 알파·굵기·색을 양자화한 키로 펜을 재사용한다(BorderBeam.PenFor와 같은 방식).
+        /// 알파는 색이 들고 온 값을 그대로 쓴다 — 트랙(0x33)과 호(단계별)가 같은 함수를 지나가므로,
+        /// 알파를 인자로 따로 받으면 둘 중 하나가 상대의 불투명도를 덮어쓴다.
+        /// </summary>
+        private Pen PenFor(Color color, double thickness, bool round)
         {
-            var brush = new SolidColorBrush(color);
-            brush.Freeze();
-            var pen = new Pen(brush, thickness)
+            int qa = color.A >> 2;                                        // 6bit
+            int qr = color.R >> 3, qg = color.G >> 3, qb = color.B >> 3;   // 5bit씩
+            int qt = Math.Clamp((int)Math.Round(thickness * 4), 0, 31);    // 0.25px 단위
+            int key = (qt << 22) | (qa << 16) | (qr << 11) | (qg << 6) | (qb << 1) | (round ? 1 : 0);
+
+            if (_penCache.TryGetValue(key, out Pen? cached)) return cached;
+
+            var pen = new Pen(FrozenBrush(Color.FromArgb((byte)(qa << 2), (byte)(qr << 3), (byte)(qg << 3), (byte)(qb << 3))), thickness)
             {
                 StartLineCap = round ? PenLineCap.Round : PenLineCap.Flat,
                 EndLineCap = round ? PenLineCap.Round : PenLineCap.Flat,
                 LineJoin = PenLineJoin.Round,
             };
             pen.Freeze();
+            _penCache[key] = pen;
             return pen;
+        }
+
+        private Brush FrozenBrush(Color color)
+        {
+            if (_solidBrushCache.TryGetValue(color, out Brush? cached)) return cached;
+
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            _solidBrushCache[color] = brush;
+            return brush;
+        }
+
+        /// <summary>헤드 글로우 — 색은 두 가지(흰색·음소거 회색)뿐이라 색별로 한 번만 만든다.</summary>
+        private Brush GlowBrush(Color accent)
+        {
+            if (_glowBrush != null && _glowColor == accent) return _glowBrush;
+
+            var glow = new RadialGradientBrush(WithAlpha(accent, 0x7F), WithAlpha(accent, 0));
+            glow.Freeze();
+            _glowBrush = glow;
+            _glowColor = accent;
+            return glow;
         }
     }
 }

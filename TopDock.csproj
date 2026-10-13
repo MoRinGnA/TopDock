@@ -7,6 +7,9 @@
     <UseWPF>true</UseWPF>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- 트레이·탐색기에 보이는 앱 아이콘. 노치 실루엣을 그대로 그린 Assets/topdock.ico
+         (앱 코드는 이 파일만 읽는다 — 아이콘을 코드로 그리지 않는다). -->
+    <ApplicationIcon>Assets/topdock.ico</ApplicationIcon>
   </PropertyGroup>
 
 <ItemGroup>
@@ -33,11 +36,25 @@
     <None Remove="tests/**" />
 </ItemGroup>
 
+<!-- 루트에서 `dotnet test`를 치면 이 프로젝트(앱)에는 테스트가 없어 "0개 실행·성공(exit 0)"으로
+     끝난다 — 도는 테스트가 없는데 초록불을 보는 것이 가장 나쁜 함정이다. 그 자리에서 소리 내어
+     막고 올바른 명령을 알려 준다. (CI는 테스트 프로젝트 경로를 직접 지정하므로 영향 없다.) -->
+<Target Name="FailLoudlyOnRootDotnetTest" BeforeTargets="VSTest"
+        Condition="'$(IsTestProject)' != 'true'">
+    <Error Text="이 프로젝트에는 테스트가 없습니다. 다음처럼 테스트 프로젝트를 지정하세요: dotnet test tests/TopDock.Tests/TopDock.Tests.csproj" />
+</Target>
+
 <!-- Pretendard (SIL OFL 1.1, Fonts/LICENSE.txt) — UI 글꼴. NuGet이 아니라
      리소스라, 기본 글롭에 안 잡히므로 직접 넣어 준다. OTF(CFF)가 TTF보다
      가볍고(4종 6.3MB vs 10.7MB) WPF가 네 굵기를 모두 인식한다. -->
 <ItemGroup>
     <Resource Include="Fonts/*.otf" />
+</ItemGroup>
+
+<!-- 트레이 아이콘도 리소스로 싣는다 — ApplicationIcon은 실행 파일에만 붙고,
+     트레이는 런타임에 같은 그림을 읽어 쓴다. 그래야 둘이 갈라지지 않는다. -->
+<ItemGroup>
+    <Resource Include="Assets/*.ico" />
 </ItemGroup>
 
 </Project>

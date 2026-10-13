@@ -11,7 +11,7 @@ namespace TopDock.Services
     /// 1순위: YouTube Data API v3 (설정에서 API 키 입력 시)
     /// 2순위: youtube.com 검색 결과 HTML 스크레이핑 (폴백)
     /// </summary>
-    public class YouTubeSearchService
+    public class YouTubeSearchService : IDisposable
     {
         private const int MaxScrapeTitleLength = 90;
 
@@ -118,6 +118,13 @@ namespace TopDock.Services
                 yield return index;
                 index += needle.Length;
             }
+        }
+
+        /// <summary>이 서비스는 HttpClient 두 개를 들고 산다 — 소유자가 끝낼 때 함께 정리한다.</summary>
+        public void Dispose()
+        {
+            _httpClient.Dispose();
+            _scrapeClient.Dispose();
         }
     }
 }

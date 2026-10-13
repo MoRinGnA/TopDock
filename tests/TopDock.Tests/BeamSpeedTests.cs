@@ -82,19 +82,65 @@ namespace TopDock.Tests
             => Assert.Equal(BeamSpeed.PixelSpeed(0.3, 1096), BeamSpeed.PixelSpeed(-0.3, 1096), 6);
 
         /// <summary>
-        /// 프레임을 절반으로 줄이는 기준 — 60fps에서 프레임당 1px도 못 가는 빛은 같은 그림을
-        /// 두 번 그리는 셈이다. 반대로 굵은 빛과 번쩍임은 프레임 사이가 실제로 보인다.
+        /// 프레임 수는 '상태 이름'이 아니라 프레임당 이동량이 정한다 — 상태 표를 그대로 박아 두면
+        /// 나중에 Speed를 다듬을 때 조용히 어크나게 된다.
+        ///
+        /// 실측 근거: 정지한 빛을 30fps로 그리는 값은 코어 1개의 13.5%(135ms/s),
+        /// 15fps면 3.3%(33ms/s)다. 대기·일시정지는 프레임당 1px도 못 가므로 15fps로 내려간다.
         /// </summary>
         [Fact]
-        public void SlowMotionIsAboutPixelsPerFrameNotAboutTheState()
+        public void FramesFollowPixelsPerFrameNotTheState()
         {
             double per = Perimeter(100, 38, 19);
-            Assert.True(BeamSpeed.IsSlowMotion(0.09, per, largeOrFlashing: false));   // 대기
-            Assert.True(BeamSpeed.IsSlowMotion(0.07, per, largeOrFlashing: false));   // 일시정지
-            Assert.True(BeamSpeed.IsSlowMotion(0.16, per, largeOrFlashing: false));   // 스트리밍 (0.64px/프레임)
-            Assert.False(BeamSpeed.IsSlowMotion(0.13, per, largeOrFlashing: true));   // 재생 — 굵은 빛
-            Assert.False(BeamSpeed.IsSlowMotion(0.30, per, largeOrFlashing: true));   // 작업 — 굵은 빛
-            Assert.False(BeamSpeed.IsSlowMotion(0.09, per, largeOrFlashing: true));   // 번쩍임 중
+            Assert.Equal(15, BeamSpeed.FramesPerSecond(0.09, per, largeOrFlashing: false));   // 대기 21.6px/s
+            Assert.Equal(15, BeamSpeed.FramesPerSecond(0.07, per, largeOrFlashing: false));   // 일시정지 16.8px/s
+            Assert.Equal(30, BeamSpeed.FramesPerSecond(0.13, per, largeOrFlashing: false));   // 재생 31.2px/s
+            Assert.Equal(30, BeamSpeed.FramesPerSecond(0.16, per, largeOrFlashing: false));   // 스트리밍 38.4px/s
+            Assert.Equal(60, BeamSpeed.FramesPerSecond(0.30, per, largeOrFlashing: false));   // 작업 72px/s
+        }
+
+        /// <summary>굵은 빛과 번쩍임은 프레임 사이가 실제로 보인다 — 느려도 60fps를 지킨다.</summary>
+        [Fact]
+        public void LargeOrFlashingAlwaysKeepsSixty()
+        {
+            double per = Perimeter(748, 144, 30);
+            foreach (var (_, speed) in States)
+            {
+                Assert.Equal(60, BeamSpeed.FramesPerSecond(speed, per, largeOrFlashing: true));
+            }
+        }
+
+        /// <summary>
+        /// 문턱은 실제로 앉는 값들 사이여야 한다 — 아니라면 어떤 상태는 프레임 수가 계속 오가고,
+        /// 스프링의 오버슈트(≈4.6%)가 계단을 넘나들 수도 있다.
+        /// </summary>
+        [Fact]
+        public void TheStillThresholdSitsBetweenRestingStates()
+        {
+            double idle = BeamSpeed.PixelSpeed(0.09, BeamSpeed.RefPerimeter);      // 21.6px/s
+            double paused = BeamSpeed.PixelSpeed(0.07, BeamSpeed.RefPerimeter);    // 16.8px/s
+            double playing = BeamSpeed.PixelSpeed(0.13, BeamSpeed.RefPerimeter);   // 31.2px/s
+
+            Assert.True(idle < BeamSpeed.StillMotionPxPerSec, $"대기 {idle:F1}px/s가 문턱 위에 있다");
+            Assert.True(paused < BeamSpeed.StillMotionPxPerSec, $"일시정지 {paused:F1}px/s가 문턱 위에 있다");
+            Assert.True(playing > BeamSpeed.StillMotionPxPerSec, $"재생 {playing:F1}px/s가 문턱 아래다");
+            // 오버슈트를 더해도 문턱을 넘지 않아야 계단이 흔들리지 않는다
+            Assert.True(idle * 1.046 < BeamSpeed.StillMotionPxPerSec, "대기 빛이 오버슈트로 문턱을 넘는다");
+        }
+
+        /// <summary>픽셀 속도가 크기와 무관하므로 프레임 수의 문턱도 크기와 무관하다.</summary>
+        [Fact]
+        public void TheFrameCountIsTheSameOnEverySurface()
+        {
+            foreach (var (stateName, speed) in States)
+            {
+                int expected = BeamSpeed.FramesPerSecond(speed, BeamSpeed.RefPerimeter, false);
+                foreach (var (surfaceName, w, h, r) in Surfaces)
+                {
+                    Assert.True(expected == BeamSpeed.FramesPerSecond(speed, Perimeter(w, h, r), false),
+                        $"{stateName} · {surfaceName}: 크기에 따라 프레임 수가 다르다");
+                }
+            }
         }
 
         /// <summary>기준 둘레는 '알약 정도' — 그래야 작은 표면의 환산이 1에 가깝고 큰 표면만 늦춘다.</summary>

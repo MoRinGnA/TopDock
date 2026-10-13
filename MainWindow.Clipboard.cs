@@ -780,8 +780,9 @@ namespace TopDock
                 Point origin = RootGrid.PointToScreen(new Point(0, 0));
                 double left = (notchBottom.X - origin.X) / scaleX - panelWidth / 2;
 
-                // 화면 밖으로 밀려나지 않게 좌우를 눌러 둔다
-                double screenWidth = SystemParameters.PrimaryScreenWidth;
+                // 화면 밖으로 밀려나지 않게 좌우를 눌러 둔다. 창이 곧 노치가 앉은 모니터이므로
+                // 경계는 주 화면이 아니라 이 창의 폭이다 — 모니터를 고르면 패널도 그 모니터 안에 머문다.
+                double screenWidth = ActualWidth;
                 left = Math.Clamp(left, 8, Math.Max(8, screenWidth - panelWidth - 8));
 
                 Canvas.SetLeft(ClipboardHistoryPanel, left);

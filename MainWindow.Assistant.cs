@@ -107,6 +107,7 @@ namespace TopDock
 
             AssistantInputBox.Clear();
             AssistantLatestResponseText.Text = string.Empty; // 최신 지시 결과만 보여준다
+            _assistantResponseOnScreen = false;              // 새 지시 — 얼굴이 다시 살아난다
             ShowAssistantFace(Controls.OrbKind.Working);   // 사고 중
 
             // 지시를 보내면 패널은 접는다 — 작은 아일랜드에서 눈이 움직이고 옆에 상태 문구가 뜬다.
@@ -144,6 +145,9 @@ namespace TopDock
                     _assistant.DeltaReceived -= DeltaProxy;
                 }
                 Log.Info($"Assistant answer length: {answer.Length}");
+                // 이 턴의 답이 화면에 남는다 — 읽는 동안 얼굴은 멈춘다(finally의 기본 얼굴 복귀가 Still로 간다).
+                // 판정은 완성된 문자열로: UI 텍스트는 델타가 늦게 붙어 이 시점에 비어 있을 수 있다.
+                _assistantResponseOnScreen = true;
                 // 빈 응답 판정은 반드시 완성된 문자열로 — UI 텍스트로 판정하면 델타가
                 // BeginInvoke로 늦게 붙는 경쟁에서 "(빈 응답)"이 실제 답변 앞에 끼어든다 (실측 버그)
                 if (string.IsNullOrWhiteSpace(answer))
@@ -174,12 +178,14 @@ namespace TopDock
             {
                 Log.Error("Assistant request failed", ex);
                 AssistantLatestResponseText.Text = "⚠ " + ex.Message;
+                _assistantResponseOnScreen = true;   // 오류 문구도 읽을 글이다 — 옆에서 눈이 깜빡이면 안 된다
                 RevealAssistantWithError();
             }
             catch (Exception ex)
             {
                 Log.Error("Assistant unexpected error", ex);
                 AssistantLatestResponseText.Text = "⚠ 알 수 없는 오류가 발생했습니다.";
+                _assistantResponseOnScreen = true;
                 RevealAssistantWithError();
             }
             finally
@@ -187,6 +193,10 @@ namespace TopDock
                 _assistantBusy = false;
                 _assistantStreaming = false;
                 _assistantToolExecuting = false;
+
+                // 이 턴이 띄운 알림도 함께 걷는다 — 도구는 취소를 보지 않아 취소 뒤에 ToolFinished가
+                // 늦게 도착하고, 그때 뜬 스티키 알림을 걷을 사람이 없으면 노치가 거기 붙잡힌다.
+                ClearTurnNotices();
 
                 if (finishedNormally && _currentViewMode == ViewMode.AssistantCompact)
                 {
@@ -262,11 +272,6 @@ namespace TopDock
                 ClipboardText: clipboardText));
         }
 
-        private void Assistant_NotchClick(object sender, MouseButtonEventArgs e)
-        {
-            // 1·2번 피드백: 노치 클릭 → AI 호출은 제거됐다. AI는 핫키(Ctrl+Shift+Space)로만 연다.
-        }
-
         private void AssistantCloseButton_Click(object sender, RoutedEventArgs e)
         {
             if (_assistantBusy)
@@ -280,6 +285,7 @@ namespace TopDock
         private void ClearAssistantConversation()
         {
             AssistantLatestResponseText.Text = string.Empty;
+            _assistantResponseOnScreen = false;   // 보여줄 답이 없다 — 기본 얼굴로 돌아간다
             AssistantScroll.ScrollToHome();
         }
 
@@ -365,6 +371,7 @@ namespace TopDock
                 RepeatBehavior = RepeatBehavior.Forever,
                 EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
             };
+            Timeline.SetDesiredFrameRate(pulse, Tokens.IdlePulseFps);
             AssistantStatusChip.BeginAnimation(UIElement.OpacityProperty, pulse);
         }
 
@@ -385,6 +392,10 @@ namespace TopDock
             _assistantIndicatorKind = Controls.OrbKind.Breathing;   // 진행 표시는 끝났다
             _assistantDoneShowing = true;
             ApplyAssistantIndicator();
+
+            // 완료 — 여기서 얼굴도 멈춘다. 작업 중 발화 표정(Talking)이 그대로 남아
+            // 아일랜드가 사라진 뒤에도 눈만 5Hz로 계속 오므라지던 자리다.
+            QuietAssistantFaces();
 
             if (_assistantDoneTimer == null)
             {
@@ -418,6 +429,15 @@ namespace TopDock
                 Controls.OrbKind.Working => Controls.AiFace.FaceState.Thinking,
                 _ => Controls.AiFace.FaceState.Alert,
             };
+
+            // 읽을 답이 화면에 남아 있는 동안에는 쉬는 얼굴로 바꾼다. 확장 화면의 얼굴은
+            // 132×96이라 눈이 3.4초마다 49px씩 감겼다 떠지고, 그게 바로 읽던 줄에서 시선을
+            // 뺏는다(실측 피드백). 지시를 보내면 위 매핑대로 곧바로 다시 살아난다.
+            if (faceState == Controls.AiFace.FaceState.Idle && _assistantResponseOnScreen)
+            {
+                faceState = Controls.AiFace.FaceState.Still;
+            }
+
             AssistantFace.SetState(faceState);
             CompactAssistantFace.SetState(faceState);   // 어느 쪽이 보이든 표정이 어긋나지 않는다
 
@@ -435,6 +455,18 @@ namespace TopDock
             bool central = kind is not (Controls.OrbKind.Breathing or Controls.OrbKind.Composing);
             _orbCentral = central;
             UpdateBeamState();
+        }
+
+        /// <summary>
+        /// 얼굴을 지금 멈춘다 — 돌고 있는 깜빡임·시선·호흡·발화를 모두 걷고 눈만 남긴다.
+        /// 지시가 끝난 뒤의 기본값이다: 읽을 답이 화면에 있든, 작은 아일랜드가 완료를 알리든,
+        /// 눈이 계속 움직이면 그게 읽는 자리에서 제일 먼저 눈에 들어온다(실측 피드백).
+        /// 새 지시·상태 전환은 ShowAssistantFace가 다시 깨운다.
+        /// </summary>
+        private void QuietAssistantFaces()
+        {
+            AssistantFace.SetState(Controls.AiFace.FaceState.Still);
+            CompactAssistantFace.SetState(Controls.AiFace.FaceState.Still);
         }
 
     }

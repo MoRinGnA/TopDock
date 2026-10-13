@@ -94,6 +94,16 @@ namespace TopDock.Services
         private const int RoleConsole = 0;      // eConsole
         private const int RoleMultimedia = 1;   // eMultimedia
 
+        /// <summary>
+        /// 볼륨을 지켜보는 폴링 주기. 콜백(IAudioEndpointVolumeCallback)이 주 통로이므로
+        /// 이 폴링은 보험이다 — 볼륨 변경의 즉각성은 콜백이 책임지고, 여기서는 장치가 바뀌었거나
+        /// 콜백이 끊겼을 때를 받아낸다. 60ms(9.4ms/s) → 250ms(2.1ms/s) — 실측(%TEMP%\audioprobe).
+        /// </summary>
+        private const int PollIntervalMs = 250;
+
+        /// <summary>이만큼 연속으로 폴링이 실패하면 장치가 사라진 것으로 보고 재초기화한다(≈5초).</summary>
+        private const int PollFailuresBeforeReinit = 20;
+
         private IMMDeviceEnumerator? _enumerator;
         private IMMDevice? _device;
         private IAudioEndpointVolume? _audioVolume;
@@ -114,10 +124,9 @@ namespace TopDock.Services
             Initialize();
             RegisterDeviceNotifications();
 
-            // 60ms volume monitor guarantees 100% detection of keyboard & taskbar volume adjustments
             _pollTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
-                Interval = TimeSpan.FromMilliseconds(60)
+                Interval = TimeSpan.FromMilliseconds(PollIntervalMs)
             };
             _pollTimer.Tick += PollTimer_Tick;
             _pollTimer.Start();
@@ -245,8 +254,8 @@ namespace TopDock.Services
             catch
             {
                 // 죽은 장치를 폴링하면 여기로 온다. 콜백 놓침 대비 백업 감지:
-                // 약 3초(50회 × 60ms) 연속 실패하면 강제 재초기화
-                if (++_consecutivePollFailures >= 50)
+                // 약 5초(20회 × 250ms) 연속 실패하면 강제 재초기화
+                if (++_consecutivePollFailures >= PollFailuresBeforeReinit)
                 {
                     _consecutivePollFailures = 0;
                     System.Windows.Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
