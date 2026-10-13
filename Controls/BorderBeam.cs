@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using TopDock.Logic;
 
 namespace TopDock.Controls
 {
@@ -19,8 +20,12 @@ namespace TopDock.Controls
     /// 그대로 쓰면 어디서나 보는 그 테두리가 된다. 이 버전은 장식 대신 '의미'를 담는다:
     ///   · 단일 액센트 색 — 무지개 대신 한 가지 빛(기본은 중립 화이트, 앨범색을 주면 그 색)
     ///   · 혜성 헤드 + 꼬리 — 좁은 호만 밝고 나머지는 어둑하게 남는다
-    ///   · 상시 림 — 평소에도 테두리 자체는 은은하게 살아 있다
-    ///   · 운동이 언어 — Speed가 초당 바퀴 수(음수=반시계). 상태에 따라 속도·방향만 바꾼다
+    ///   · 상시 림 — 평소에도 테두리 자체는 은은하게 살아 있다. 노치 가장자리의 주인은 이 빔
+    ///     하나다(본체 Border는 BorderBrush를 비운다) — 두 겹으로 그리면 어느 쪽을 고쳐도
+    ///     결과를 예측할 수 없다
+    ///   · 운동이 언어 — Speed는 '기준 둘레(240px)에서의 초당 바퀴 수'(음수=반시계).
+    ///     픽셀 속도는 240 × Speed로 표면 크기와 무관하게 일정하다 — 큰 카드에서 빛이
+    ///     더 빨라지지 않는다. 둘레가 길면 한 바퀴에 걸리는 시간만 길어진다.
     ///
     /// 원본과 달리 conic 마스크 비트맵을 쓰지 않는다. 링 세그먼트마다 헤드로부터의
     /// 각도차로 알파를 직접 계산하므로 크기 변화 때 무거운 재생성이 없다(모프 끊김 원인 제거).
@@ -31,13 +36,32 @@ namespace TopDock.Controls
         private const double FadeInSec = 0.6;
         private const double FadeOutSec = 0.5;
 
+        // ── 시계 ── 60fps는 굵은 빛과 모프를 위한 값이다. 그보다 느린 빛은 30fps로도
+        // 눈에 담기는 것이 없다(1px/프레임 미만) — 그만큼 CPU를 돌려준다.
+        private static readonly TimeSpan FastTick = TimeSpan.FromSeconds(1.0 / 60.0);
+        private static readonly TimeSpan SlowTick = TimeSpan.FromSeconds(1.0 / 30.0);
+
         // ── 살아있는 가장자리 상수 ──
-        private const double BaseRim = 0.26;      // 상시 림 알파(어둑한 가장자리)
+        // 상시 림 알파. 이 가장자리의 유일한 주인이므로, 예전 두 겹(본체 그래디언트 + 빔 림)의
+        // 합성값을 둘레 길이로 가중해 맞춘다 — 위 0.36 · 중간 0.30 · 아래 0.27 → 평균 0.31.
+        // 그래서 위 변만 0.36→0.31로 조금 어두워지고(그래디언트의 기울기가 사라진 자리)
+        // 옆·아래는 0.27~0.30→0.31로 거의 제자리다. 이제 가장자리는 상태에 따라 함께 숨쉬다.
+        private const double BaseRim = 0.31;
         private const double HeadSigma = 0.026;   // 헤드 코어 반폭(둘레 비율)
         private const double TailSpan = 0.46;     // 꼬리 길이(둘레 비율)
         private const double TailFalloff = 0.115; // 꼬리 감쇠
         private const double BloomGain = 1.3;
         private const double AlbumHueSpread = 130.0; // Album 색에서 꼬리 끝까지 색상이 도는 각도(deg)
+
+        // ── 이완(스프링) ── 상태가 바뀔 때 값이 목표로 '즉시' 튀면 빛이 손짓을 한 프레임에 갈아끼운다
+        // (그게 이질감이다). 대신 스프링으로 이완한다 — 속도·밝기·형태·색이 각자 자기 무게로
+        // 목표에 앉고, 살짝 넘겼다 앉는 오버슈트가 쫀득함을 만든다. 무게(정착 시간)는 값마다 다르다:
+        // 운동은 빨리 따라와야 하고(0.5s), 굵기·밝기는 조금 무겁게(0.6s), 색은 가장 천천히(0.7s).
+        private static readonly double SpeedOmega = BeamSpring.OmegaFor(0.50);
+        private static readonly double StrengthOmega = BeamSpring.OmegaFor(0.60);
+        private static readonly double WeightOmega = BeamSpring.OmegaFor(0.60);
+        private static readonly double TintOmega = BeamSpring.OmegaFor(0.70);
+        private static readonly double ColorOmega = BeamSpring.OmegaFor(0.70);
 
         /// <summary>액센트가 없을 때의 기본 빛 — 중립 화이트(앨범색이 오면 그 색으로 바뀐다).</summary>
         private static readonly Color DefaultAccent = Color.FromRgb(0xF0, 0xF3, 0xF8);
@@ -49,6 +73,9 @@ namespace TopDock.Controls
             _timer.Tick += OnTick;
             IsVisibleChanged += (s, e) => UpdateTimer();
             SizeChanged += (s, e) => Rebuild();
+            // 이완 상태의 출발점 = 기본 빛. 첫 프레임부터 색이 스프링 위에 앉도록 맞춰 둔다.
+            _cR = DefaultAccent.R; _cG = DefaultAccent.G; _cB = DefaultAccent.B;
+            _strengthS = 1.0;
         }
 
         // ── 속성 ──
@@ -122,6 +149,15 @@ namespace TopDock.Controls
         private double _fadeStartTime = -1;
         private bool _fadingIn;
 
+        // ── 이완 상태(스프링) ── 값이 아니라 '지금 어디쯤인가'다. 목표(Speed·Strength·Form·
+        //    Tint·AccentColor)가 바뀌면 여기서 서서히 따라간다. 렌더는 이 값을 읽는다.
+        private double _speedS, _speedV;         // 지금의 운동 속도(기준 둘레 기준)
+        private double _strengthS, _strengthV;   // 지금의 밝기
+        private double _weightS, _weightV;       // 형태의 무게 0=Line … 1=Large
+        private double _tintS, _tintV;           // 색 번짐 0=Mono … 1=Album
+        private double _cR, _cG, _cB;            // 지금의 빛 색
+        private double _cRV, _cGV, _cBV;
+
         private void OnActiveChanged()
         {
             _fadeFrom = _fade;
@@ -142,8 +178,21 @@ namespace TopDock.Controls
             double dt = Math.Clamp(now - _lastTick, 0.0, 0.1);
             _lastTick = now;
             _t = now;
-            _head += dt * Speed * Math.Clamp(240.0 / _perimeter, 0.30, 1.0);
+            // 목표값으로 이완 — 상태가 바뀌어도 빛은 손짓을 갈아끼우지 않고 넘어간다.
+            // 속도·밝기·형태·틴트·색이 각자 자기 무게로 목표에 앉는다. 이 이완이 곧 가속·감속이다.
+            BeamSpring.Step(ref _speedS, ref _speedV, Speed, dt, SpeedOmega);
+            BeamSpring.Step(ref _strengthS, ref _strengthV, Math.Clamp(Strength, 0, 1), dt, StrengthOmega);
+            BeamSpring.Step(ref _weightS, ref _weightV, Form == BeamForm.Large ? 1 : 0, dt, WeightOmega);
+            BeamSpring.Step(ref _tintS, ref _tintV, Tint == BeamTint.Album ? 1 : 0, dt, TintOmega);
+            Color ct = AccentColor ?? DefaultAccent;
+            BeamSpring.Step(ref _cR, ref _cRV, ct.R, dt, ColorOmega);
+            BeamSpring.Step(ref _cG, ref _cGV, ct.G, dt, ColorOmega);
+            BeamSpring.Step(ref _cB, ref _cBV, ct.B, dt, ColorOmega);
+
+            // 헤드는 '지금의' 속도로 돈다 — 목표가 아니라 이완된 값이라 가속·감속이 손짓이 된다.
+            _head += dt * _speedS * BeamSpeed.ScaleFor(_perimeter);
             _head -= Math.Floor(_head);
+            UpdateTickRate();
 
             if (_fadeStartTime >= 0)
             {
@@ -161,6 +210,21 @@ namespace TopDock.Controls
             bool need = IsVisible && (Active || _fade > 0 || _fadeStartTime >= 0);
             if (need && !_timer.IsEnabled) _timer.Start();
             else if (!need && _timer.IsEnabled) _timer.Stop();
+            UpdateTickRate();
+        }
+
+        /// <summary>
+        /// 빛이 느리면 절반의 프레임으로 그린다.
+        ///
+        /// 대기(0.09 → 21.6px/s)는 60fps에서 프레임당 0.36px밖에 움직이지 않는다 — 같은 그림을
+        /// 두 번 그리는 셈이라, 30fps로도 눈에 담기는 것이 없다. 반대로 굵은 빛(Large)과
+        /// 번쩍임(Flash)은 프레임 사이가 실제로 보이므로 60fps를 지킨다.
+        /// </summary>
+        private void UpdateTickRate()
+        {
+            bool slow = BeamSpeed.IsSlowMotion(_speedS, _perimeter, _weightS > 0.5 || Flash >= 0.001);
+            TimeSpan want = slow ? SlowTick : FastTick;
+            if (_timer.Interval != want) _timer.Interval = want;
         }
 
         /// <summary>CSS ease = cubic-bezier(0.25, 0.1, 0.25, 1)</summary>
@@ -181,7 +245,7 @@ namespace TopDock.Controls
         private struct RingPt { public double X, Y, Ang; } // Ang: 12시 방향 시계각 [0,1)
         private readonly List<RingPt> _ring = new();
         private double _radius;
-        private double _perimeter = 240; // 링 둘레 길이 — 큰 표면일수록 빛이 천천히 흘러 눈에 담긴다
+        private double _perimeter = BeamSpeed.RefPerimeter; // 링 둘레 — 픽셀 속도를 이 값 기준으로 맞춘다
 
         private void Rebuild()
         {
@@ -268,20 +332,26 @@ namespace TopDock.Controls
             if (w < 4 || h < 4 || _ring.Count < 2 || _fade <= 0.001) return;
 
             double bw = BorderWidth;
-            double fade = _fade * Math.Clamp(Strength, 0, 1);
+            double fade = _fade * Math.Clamp(_strengthS, 0, 1);
             if (fade <= 0.001) return;
 
-            Color accent = AccentColor is Color ac ? ac : DefaultAccent;
+            // 색도 이완값 — 흰 빛에서 앨범색으로, 앨범색에서 흰 빛으로 한 프레임에 갈아끼우지 않는다.
+            Color accent = Color.FromRgb(
+                (byte)Math.Clamp(_cR, 0, 255),
+                (byte)Math.Clamp(_cG, 0, 255),
+                (byte)Math.Clamp(_cB, 0, 255));
             // 순간 강조 — 림·블룸·혜성을 한꺼번에 올려 "빛났다"는 느낌을 만든다
             double edgeGain = 1.0 + Math.Clamp(Flash, 0, 1) * 1.5;
             double litFade = fade * edgeGain;   // 밝기 계산은 전부 여기에 턴다
 
-            // 형태 — Large는 헤드가 크고 굵게, 꼬리도 조금 길게 돈다
-            bool large = Form == BeamForm.Large;
-            double formScale = large ? 2.0 : 1.0;
+            // 형태 — Large는 헤드가 크고 굵게, 꼬리도 조금 길게 돈다.
+            // large는 0↔1을 이완하는 무게다 — 일시정지↔재생처럼 Line↔Large를 오갈 때
+            // 굵기가 '딱' 바뀌지 않고 부풀었다 가라앉는다.
+            double large = _weightS;
+            double formScale = 1.0 + large;
 
             // 크기 보정 — 확장 노치처럼 큰 표면에선 고정 px 빛이 상대적으로 티가 안 난다.
-            // 밒의 굵기·블룸·헤드를 표면 크기에 비례해 키워 존재감을 유지한다.
+            // 빛의 굵기·블룸·헤드를 표면 크기에 비례해 키워 존재감을 유지한다.
             double lightScale = Math.Clamp(Math.Sqrt(w * h) / 65.0, 1.0, 3.2);
             double gain = Math.Sqrt(lightScale); // 굵기·헤드는 완만하게(과하면 뭉개진다)
             // 안쪽 빛 스위치 — 색으로 상태를 말하는 콘텐츠(볼륨 바 등)가 떠 있는 동안엔 끈다.
@@ -290,21 +360,19 @@ namespace TopDock.Controls
             // 약간은 번져야 혜성이 테두리 위의 선이 아니라 '공간을 채운 빛'으로 읽힌다.
             double wash = Math.Clamp((lightScale - 0.9) * 0.17, 0, 0.24) * interior;
             // 색 유리 틴트 — 앨범색이 테두리에서 안쪽으로 스며들어 공간이 곡의 색을 띤다
-            double tint = Tint == BeamTint.Album ? Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) * interior : 0.0;
+            double tint = _tintS * Math.Clamp((lightScale - 0.95) * 0.09, 0, 0.15) * interior;
 
             // 크기 보정 — 작은 알약은 둘레가 짧아 같은 비율의 꼬리도 알약을 거의 다 감싼다.
             // 그래서 작은 노치에선 꼬리를 줄이고, 큰 노치에선 굵기를 낮춰 둔다.
             double sizeFactor = Math.Clamp(lightScale, 1.0, 3.2);
 
             double headSigma = HeadSigma * formScale * gain;
-            double tailSpan = TailSpan * (large ? 1.05 : 1.0) * (0.42 + 0.14 * sizeFactor);
-            double cometW = bw * (large ? 2.4 : 2.0) * (1.0 + (sizeFactor - 1.0) * 0.35);
-            double bloomScale = (large ? 1.6 : 1.0) * (1.0 + (sizeFactor - 1.0) * 0.30);
+            double tailSpan = TailSpan * (1.0 + 0.05 * large) * (0.42 + 0.14 * sizeFactor);
+            double cometW = bw * (2.0 + 0.4 * large) * (1.0 + (sizeFactor - 1.0) * 0.35);
+            double bloomScale = (1.0 + 0.6 * large) * (1.0 + (sizeFactor - 1.0) * 0.30);
 
             // 헤드 위상 — OnTick이 적분해 둔 값을 그대로 쓴다. 여기서 _t × Speed로 다시 만들면
             // 노치가 커지는 동안 _perimeter가 바뀌는 만큼 위상이 튀어 빛이 여러 바퀴 휙 돈다.
-            // (큰 표면일수록 같은 '바퀴'가 훨씬 빠른 픽셀 속도라, 둘레로 속도를 정규화하는 것
-            //  자체는 OnTick 쪽에서 그대로 유지한다.)
             double head = _head;
             // 느린 호흡 — 빛이 살아 숨쉬는 느낌
             double breathe = 0.88 + 0.12 * Math.Sin(_t * 1.6);
@@ -336,14 +404,18 @@ namespace TopDock.Controls
             dc.DrawGeometry(null, PenFor(accent,
                 (int)Math.Clamp(BaseRim * litFade * 255, 0, 255), bw), ringGeo);
 
+            // 블룸과 혜성은 같은 '밝기 구간'을 나눠 쓴다 — 한 번만 분해한다(점마다 exp()를
+            // 두 번 부르고 구간 목록을 두 번 만들던 것을 한 번으로).
+            BuildRuns(head, headSigma, tailSpan, litFade * breathe);
+
             // 2) 블룸 — 헤드 주변의 accent 광이 테두리 안팎으로 번진다
-            DrawBloom(dc, accent, head, litFade, breathe, bloomScale, headSigma, tailSpan);
+            DrawBloom(dc, accent, bloomScale);
 
             // 2.5) 안쪽 물들임 — 헤드 빛이 패널 안으로 퍼진다(큰 표면 전용)
-            DrawWash(dc, accent, head, fade, breathe, wash * edgeGain);
+            DrawWash(dc, accent, fade, breathe, wash * edgeGain);
 
             // 3) 혜성 헤드 + 꼬리 — 링 세그먼트별 알파
-            DrawComet(dc, accent, head, litFade, breathe, cometW, headSigma, tailSpan);
+            DrawComet(dc, accent, head, cometW, headSigma, tailSpan);
 
             dc.Pop(); // clip
         }
@@ -353,6 +425,39 @@ namespace TopDock.Controls
         // 부채꼴 이음매가 벌어져 점(도트)처럼 보인다. 밝기 버킷별로 구간을 이어 그리면
         // 곡선에서도 매끈한 한 줄기가 되고, 그리기 횟수도 수천 → 수백으로 줄어든다.
         private const int AlphaBuckets = 48;
+
+        // ── 한 프레임에 한 번만 하는 분해 ──
+        // 블룸도 혜성도 '점마다 밝기 버킷을 구해 같은 버킷끼리 이어 긋기'를 한다. 각자 하면
+        // 점마다 exp()를 두 번씩 부르고 같은 구간 목록을 두 번 만든다 — 한 번 만들어 나눠 쓴다.
+        private readonly List<(int Start, int End, int Bucket)> _runs = new(96);
+        /// <summary>헤드에 가장 가까운 링 점 — 물들임이 퍼져 나가는 자리(매 프레임 다시 찾지 않는다).</summary>
+        private int _washIndex;
+
+        private void BuildRuns(double head, double headSigma, double tailSpan, double gain)
+        {
+            _runs.Clear();
+            int n = _ring.Count;
+            if (n < 2) return;
+
+            int runStart = 0;
+            int runBucket = CometBucket(0, head, headSigma, tailSpan, gain);
+            double near = Math.Abs(SignedDelta(_ring[0].Ang, head));
+            _washIndex = 0;
+
+            for (int i = 1; i <= n; i++)
+            {
+                int bucket = i < n ? CometBucket(i, head, headSigma, tailSpan, gain) : -1;
+                if (i < n)
+                {
+                    double d = Math.Abs(SignedDelta(_ring[i].Ang, head));
+                    if (d < near) { near = d; _washIndex = i; }
+                }
+                if (bucket == runBucket) continue;
+                if (runBucket >= 0) _runs.Add((runStart, i, runBucket));
+                runStart = i;
+                runBucket = bucket;
+            }
+        }
 
         /// <summary>세그먼트 i의 혜성 알파(fade·breathe 반영)를 버킷으로 — 너무 어두우면 -1.</summary>
         private int CometBucket(int i, double head, double headSigma, double tailSpan, double gain)
@@ -382,86 +487,58 @@ namespace TopDock.Controls
             dc.DrawGeometry(null, pen, geo);
         }
 
-        private void DrawBloom(DrawingContext dc, Color accent, double head, double fade, double breathe,
-            double formScale, double headSigma, double tailSpan)
+        private void DrawBloom(DrawingContext dc, Color accent, double formScale)
         {
             double[] th = { 11.5, 6.8, 4.0, 2.2 };
             double[] am = { 0.075, 0.15, 0.27, 0.48 };
 
-            int n = _ring.Count;
-            if (n < 2) return;
-            double gain = fade * breathe;
-            int runStart = 0;
-            int runBucket = CometBucket(0, head, headSigma, tailSpan, gain);
-            for (int i = 1; i <= n; i++)
+            foreach ((int start, int end, int bucket) in _runs)
             {
-                int bucket = i < n ? CometBucket(i, head, headSigma, tailSpan, gain) : -1;
-                if (bucket == runBucket) continue;
-
-                if (runBucket >= 0)
+                double a = (bucket + 0.5) / AlphaBuckets;   // fade·breathe가 반영된 밝기
+                for (int k = 0; k < th.Length; k++)
                 {
-                    double a = (runBucket + 0.5) / AlphaBuckets;   // fade·breathe 반영된 밝기
-                    for (int k = 0; k < th.Length; k++)
-                    {
-                        byte aa = (byte)Math.Clamp(a * am[k] * BloomGain * 255, 0, 255);
-                        if (aa < 2) continue;
-                        StrokeRingRun(dc, runStart, i, PenFor(accent, aa, th[k] * formScale));
-                    }
+                    byte aa = (byte)Math.Clamp(a * am[k] * BloomGain * 255, 0, 255);
+                    if (aa < 2) continue;
+                    StrokeRingRun(dc, start, end, PenFor(accent, aa, th[k] * formScale));
                 }
-                runStart = i;
-                runBucket = bucket;
             }
         }
 
-        private void DrawComet(DrawingContext dc, Color accent, double head, double fade, double breathe,
-            double cometW, double headSigma, double tailSpan)
+        private void DrawComet(DrawingContext dc, Color accent, double head, double cometW,
+            double headSigma, double tailSpan)
         {
             int n = _ring.Count;
             if (n < 2) return;
-            double gain = fade * breathe;
-            int runStart = 0;
-            int runBucket = CometBucket(0, head, headSigma, tailSpan, gain);
-            for (int i = 1; i <= n; i++)
+
+            foreach ((int start, int end, int bucket) in _runs)
             {
-                int bucket = i < n ? CometBucket(i, head, headSigma, tailSpan, gain) : -1;
-                if (bucket == runBucket) continue;
+                // 구간 중앙 세그먼트를 대표색으로 (Album이면 꼬리를 따라 색상이 돈다)
+                int mid = start + (end - start) / 2;
+                double d = SignedDelta(_ring[mid % n].Ang, head);
+                // 앨범 색 번짐도 이완값으로 곱한다 — Mono→Album 전환이 색을 갈아끼우지 않는다.
+                Color seg = d < 0
+                    ? RotateHue(accent, -AlbumHueSpread * _tintS * Math.Min(1.0, -d / tailSpan))
+                    : accent;
 
-                if (runBucket >= 0)
-                {
-                    // 구간 중앙 세그먼트를 대표색으로 (Album이면 꼬리를 따라 색상이 돈다)
-                    int mid = runStart + (i - runStart) / 2;
-                    double d = SignedDelta(_ring[mid % n].Ang, head);
-                    Color seg = Tint == BeamTint.Album && d < 0
-                        ? RotateHue(accent, -AlbumHueSpread * Math.Min(1.0, -d / tailSpan))
-                        : accent;
+                // 헤드 코어는 흰색에 가깝게(열감), 꼬리로 갈수록 색
+                double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma));
+                var c = Color.FromRgb(
+                    MixChannel(seg.R, 255, hot),
+                    MixChannel(seg.G, 255, hot),
+                    MixChannel(seg.B, 255, hot));
 
-                    // 헤드 코어는 흰색에 가깝게(열감), 꼬리로 갈수록 색
-                    double hot = Math.Exp(-(d * d) / (2 * headSigma * headSigma));
-                    var c = Color.FromRgb(
-                        MixChannel(seg.R, 255, hot),
-                        MixChannel(seg.G, 255, hot),
-                        MixChannel(seg.B, 255, hot));
-
-                    double a = (runBucket + 0.5) / AlphaBuckets;   // fade·breathe 반영된 밝기
-                    StrokeRingRun(dc, runStart, i, PenFor(c, (int)(a * 255), cometW));
-                }
-                runStart = i;
-                runBucket = bucket;
+                double a = (bucket + 0.5) / AlphaBuckets;   // fade·breathe가 반영된 밝기
+                StrokeRingRun(dc, start, end, PenFor(c, (int)(a * 255), cometW));
             }
         }
 
         /// <summary>헤드 근처에서 패널 안쪽으로 번지는 빛무리 — 큰 표면에서 빛이 실제로 공간을 채운다.</summary>
-        private void DrawWash(DrawingContext dc, Color accent, double head, double fade, double breathe, double wash)
+        private void DrawWash(DrawingContext dc, Color accent, double fade, double breathe, double wash)
         {
-            if (wash <= 0.01) return;
+            if (wash <= 0.01 || _ring.Count == 0) return;
 
-            // 헤드에 가장 가까운 링 점을 찾아 그 자리에서 안쪽으로 퍼뜨린다
-            RingPt best = _ring[0]; double bd = 1.0;
-            for (int i = 0; i < _ring.Count; i++)
-            {
-                double d = Math.Abs(SignedDelta(_ring[i].Ang, head));
-                if (d < bd) { bd = d; best = _ring[i]; }
-            }
+            // 헤드에 가장 가까운 링 점은 BuildRuns가 이미 찾아 두었다 — 매 프레임 다시 훑지 않는다
+            RingPt best = _ring[_washIndex];
 
             double r = Math.Min(ActualWidth, ActualHeight) * 0.60;
             double a = Math.Clamp(wash * fade * breathe, 0, 1);

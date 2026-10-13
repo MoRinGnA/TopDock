@@ -5,7 +5,16 @@
          Apple Dynamic Island 순정 Jet Black 스타일
          - 칠흑 같은 올레드 블랙 (#0C0C0E)
          - 정밀한 서브밀리 1px 림 하이라이트
-         - 부드러운 깊이감의 앰비언트 섀도우
+
+         그림자(DropShadowEffect)는 없다 — 리퀴드 글래스 시절(38be433)의 잔재였고,
+         지금은 데스크톱 위에 떠 있어서 실측해 보면 바닥 바로 아래 0.38α에서 시작해
+         40px 아래까지 검정을 깔기만 했다(빛을 바깥으로 내보내는 것은 빔이 아니라 이 그림자뿐이었다).
+         이 스타일을 쓰는 세 곳(노치 본체·클립보드 기록·인박스)이 함께 평평해진다.
+
+         이 1px 림은 '고정된 패널의 경계'다 — 클립보드·인박스처럼 스스로 빛나지 않는 상자가 쓴다.
+         노치 본체는 예외로, 그 가장자리는 살아있는 빛(BorderBeam)이 혼자 맡는다
+         (MainWindow.xaml의 NotchBorder가 BorderBrush를 비우는 이유). 두 겹으로 그리면
+         한쪽만 고쳐도 결과가 예측되지 않는다.
          ============================================================ -->
     <Style x:Key="DarkNotchStyle" TargetType="Border">
         <Setter Property="Background" Value="#0C0C0E"/>
@@ -20,11 +29,6 @@
         </Setter>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="19"/>
-        <Setter Property="Effect">
-            <Setter.Value>
-                <DropShadowEffect Color="#000000" BlurRadius="36" ShadowDepth="8" Opacity="0.55" Direction="270"/>
-            </Setter.Value>
-        </Setter>
     </Style>
 
 </ResourceDictionary>

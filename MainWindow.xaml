@@ -191,9 +191,15 @@
         <!-- Notch container: centered at top -->
         <Grid HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,0">
 
-            <!-- Main notch border — 배터리 상태는 테두리를 칠하지 않고 안쪽 우측 점으로 조용히 알린다. -->
+            <!-- Main notch border — 배터리 상태는 테두리를 칠하지 않고 안쪽 우측 점으로 조용히 알린다.
+                 BorderBrush는 비운다: 이 가장자리의 주인은 빔(NotchBeam) 하나다. 예전에는 스타일의
+                 그래디언트 테두리와 빔의 상시 림이 같은 1px를 겹쳐 그려, 위 변만 0.36α로 밝고
+                 옆·아래는 0.27~0.30α로 어긋나 있었다(합성이 우연히 만든 값이라 어느 쪽을 고쳐도
+                 결과를 예측할 수 없었다). 두께는 그대로 둔다 — 레이아웃과 내용 자리가 1px도 안 움직인다.
+                 (클립보드·인박스 같은 다른 패널은 DarkNotchStyle의 테두리를 그대로 쓴다.) -->
             <Border x:Name="NotchBorder" Width="100" Height="38"
                     Style="{StaticResource DarkNotchStyle}"
+                    BorderBrush="Transparent"
                     MouseEnter="Notch_MouseEnter"
                     MouseLeave="Notch_MouseLeave"
                     MouseLeftButtonUp="Notch_Click"
